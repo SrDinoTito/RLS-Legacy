@@ -5,6 +5,7 @@
 	import AgentMetrics from '#lib/components/AgentMetrics.svelte';
 	import Sparkline from '#lib/components/Sparkline.svelte';
 	import { Badge } from '#lib/components/ui/badge/index.js';
+	import { Button } from '#lib/components/ui/button/index.js';
 	import { Card } from '#lib/components/ui/card/index.js';
 	import { fmtAgo } from '#lib/format.js';
 
@@ -18,7 +19,7 @@
 	 * mini-label "últimos datos · visto hace X" encima; el footer solo las
 	 * lleva cuando está ONLINE.
 	 */
-	let { agent }: { agent: Agent } = $props();
+	let { agent, onDetails }: { agent: Agent; onDetails?: () => void } = $props();
 
 	const nowSecs = $state(Math.floor(Date.now() / 1000));
 
@@ -129,5 +130,10 @@
 				<Badge variant="destructive">{agent.alert_count} alerta(s)</Badge>
 			{/if}
 		</div>
+		{#if onDetails}
+			<div class="agent-card-actions">
+				<Button variant="ghost" size="sm" onclick={onDetails}>Ver configuración e historial</Button>
+			</div>
+		{/if}
 	</div>
 </Card>

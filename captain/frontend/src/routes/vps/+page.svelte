@@ -55,7 +55,7 @@
 								<span class="vps-icon"><Server size={20} strokeWidth={1.6} aria-hidden="true" /></span>
 								<ArrowUpRight size={16} class="text-muted-foreground" aria-hidden="true" />
 							</div>
-							<p class="vps-card-kicker">VPS · {group.agents.length} contenedor(es) · {group.ignoredCount} excluido(s)</p>
+							<p class="vps-card-kicker">VPS · {group.agents.length - group.ignoredCount} en monitoreo · {group.ignoredCount} ignorado(s)</p>
 							<h3 class="vps-card-title" title={group.name}>{group.name}</h3>
 							<div class="vps-card-stats">
 								<span><i class="status-dot status-dot--online"></i>{group.onlineCount} en línea</span>

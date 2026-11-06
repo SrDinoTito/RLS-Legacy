@@ -10,6 +10,7 @@
 	import { auth } from '#lib/stores/auth.svelte.js';
 	import { sse, refreshAgents } from '#lib/stores/sse.svelte.js';
 	import AgentCard from '#lib/components/AgentCard.svelte';
+	import AgentDetailModal from '#lib/components/AgentDetailModal.svelte';
 	import ContainerTagsEditor from '#lib/components/ContainerTagsEditor.svelte';
 	import NotificationPolicyControls from '#lib/components/NotificationPolicyControls.svelte';
 	import { Badge } from '#lib/components/ui/badge/index.js';
@@ -30,6 +31,7 @@
 	const groupName = $derived(group?.name ?? (key === UNKNOWN_VPS_KEY ? 'Sin hostname' : key));
 	const isAdmin = $derived(auth.user?.role === 'admin');
 	const onlineCount = $derived(monitoredAgents.filter((agent) => agent.status === 'online').length);
+	const offlineCount = $derived(monitoredAgents.length - onlineCount);
 	const alertCount = $derived(monitoredAgents.reduce((total, agent) => total + (agent.alert_count ?? 0), 0));
 	const tagCounts = $derived.by(() => {
 		const counts = new Map<string, number>();
@@ -42,6 +44,9 @@
 	let ignoreTarget = $state<Agent | null>(null);
 	let ignoreDialogOpen = $state(false);
 	let updatingAgentID = $state<number | null>(null);
+	let detailAgentID = $state<number | null>(null);
+	let detailOpen = $state(false);
+	const detailAgent = $derived(detailAgentID == null ? null : (groupAgents.find((agent) => agent.id === detailAgentID) ?? null));
 	const visibleAgents = $derived.by(() => selectedTags.length === 0
 		? monitoredAgents
 		: monitoredAgents.filter((agent) => allAgentTags(agent).some((tag) => selectedTags.includes(tag))));
@@ -55,6 +60,11 @@
 		ignoreDialogOpen = true;
 	}
 
+	function openAgentDetails(agent: Agent): void {
+		detailAgentID = agent.id;
+		detailOpen = true;
+	}
+
 	async function setIgnored(agent: Agent, ignored: boolean): Promise<void> {
 		updatingAgentID = agent.id;
 		try {
@@ -64,7 +74,7 @@
 				return;
 			}
 			if (ignored) {
-				toast.success('Contenedor excluido', { description: `Se resolvieron ${result.data?.alerts_resolved ?? 0} alerta(s); sus compañeros en la VPS siguen vigilados.` });
+				toast.success('Contenedor ignorado', { description: `Se cerraron ${result.data?.alerts_resolved ?? 0} alerta(s); el resto de la VPS sigue en monitoreo.` });
 				ignoreDialogOpen = false;
 				ignoreTarget = null;
 			} else {
@@ -85,8 +95,8 @@
 	<header class="route-heading">
 		<div class="min-w-0">
 			<p class="route-kicker">VPS · perfil de servidor</p>
-			<h1 class="route-title break-all">{groupName}</h1>
-			<p class="route-copy">Contenedores reportados por esta VPS. La identidad del Docker Engine la mantiene separada aunque comparta hostname con otra. Las etiquetas manuales clasifican cada contenedor sin modificar las del token.</p>
+			<h1 class="route-title break-words">{groupName}</h1>
+			<p class="route-copy">Estado, etiquetas e historial de los contenedores reportados por esta VPS.</p>
 		</div>
 		<div class="flex flex-wrap items-center gap-2">
 			<Badge variant={sse.status === 'live' ? 'secondary' : 'outline'}>{sse.status === 'live' ? 'DATOS EN VIVO' : sse.status.toUpperCase()}</Badge>
@@ -98,18 +108,22 @@
 	<section class="vps-profile-summary" aria-label="Resumen de la VPS">
 		<Card class="vps-profile-stat"><span>En monitoreo</span><strong>{monitoredAgents.length.toString().padStart(2, '0')}</strong></Card>
 		<Card class="vps-profile-stat vps-profile-stat--online"><span>En línea</span><strong>{onlineCount.toString().padStart(2, '0')}</strong></Card>
+		<Card class="vps-profile-stat vps-profile-stat--offline"><span>Sin señal</span><strong>{offlineCount.toString().padStart(2, '0')}</strong></Card>
 		<Card class="vps-profile-stat vps-profile-stat--alerts"><span>Alertas abiertas</span><strong>{alertCount.toString().padStart(2, '0')}</strong></Card>
-		{#if isAdmin}<Card class="vps-profile-stat"><span>Excluidos</span><strong>{ignoredAgents.length.toString().padStart(2, '0')}</strong></Card>{/if}
+		{#if isAdmin}<Card class="vps-profile-stat"><span>Ignorados</span><strong>{ignoredAgents.length.toString().padStart(2, '0')}</strong></Card>{/if}
 	</section>
 
 	{#if isAdmin}
-		<NotificationPolicyControls scope="vps" scopeId={key} />
+		<details class="vps-settings">
+			<summary><span><strong>Avisos de esta VPS</strong><small>Preferencias de notificación para sus contenedores</small></span><span class="vps-settings-toggle">Configurar</span></summary>
+			<div class="vps-settings-content"><NotificationPolicyControls scope="vps" scopeId={key} /></div>
+		</details>
 	{/if}
 
 	<section class="grid gap-3" aria-labelledby="vps-containers-title">
 		<div class="flex flex-wrap items-end justify-between gap-3">
-			<div class="flex items-center gap-2"><Server size={17} class="text-secondary" aria-hidden="true" /><div><p class="page-subtitle font-display uppercase tracking-[0.14em]">Inventario del servidor</p><h2 id="vps-containers-title" class="mt-1 font-display text-base font-semibold">Contenedores de esta VPS</h2></div></div>
-			<span class="text-xs text-muted-foreground">{visibleAgents.length} de {monitoredAgents.length} en monitoreo</span>
+			<div class="flex items-center gap-2"><Server size={17} class="text-secondary" aria-hidden="true" /><div><p class="page-subtitle font-display uppercase tracking-[0.14em]">Inventario</p><h2 id="vps-containers-title" class="mt-1 font-display text-base font-semibold">Contenedores</h2></div></div>
+			<span class="text-xs text-muted-foreground">{visibleAgents.length} visibles · {monitoredAgents.length} en monitoreo</span>
 		</div>
 		{#if tagCounts.length > 0}
 			<div class="vps-tag-filter" aria-label="Filtrar contenedores por etiqueta">
@@ -123,15 +137,20 @@
 			<div class="vps-container-grid">
 				{#each visibleAgents as agent (agent.id)}
 					<div class="vps-container-entry">
-						<AgentCard {agent} />
+						<AgentCard {agent} onDetails={() => openAgentDetails(agent)} />
 						{#if isAdmin}
-							<ContainerTagsEditor {agent} {suggestions} />
-							<div class="flex justify-end px-1">
-								<Button variant="ghost" size="sm" onclick={() => askIgnore(agent)} disabled={updatingAgentID === agent.id}>
-									<EyeOff size={14} aria-hidden="true" />
-									Ignorar este contenedor
-								</Button>
-							</div>
+							<details class="vps-container-settings">
+								<summary>Etiquetas y monitoreo<span>Configurar</span></summary>
+								<div class="vps-container-settings-body">
+									<ContainerTagsEditor {agent} {suggestions} />
+									<div class="flex justify-end">
+										<Button variant="ghost" size="sm" onclick={() => askIgnore(agent)} disabled={updatingAgentID === agent.id}>
+											<EyeOff size={14} aria-hidden="true" />
+											Ignorar monitoreo
+										</Button>
+									</div>
+								</div>
+							</details>
 						{/if}
 					</div>
 				{/each}
@@ -140,30 +159,35 @@
 			<Card class="vps-empty">
 				{#if waiting}<p class="font-display text-sm uppercase tracking-[0.12em]">Trazando los contenedores…</p>
 				{:else if groupAgents.length === 0}<p class="font-display text-sm uppercase tracking-[0.12em]">No se encontraron contenedores</p><p class="mt-1 text-sm text-muted-foreground">El host puede haber cambiado su hostname o todavía no reportó.</p>
-				{:else if monitoredAgents.length === 0}<p class="font-display text-sm uppercase tracking-[0.12em]">Todos los contenedores están excluidos</p><p class="mt-1 text-sm text-muted-foreground">Podés volver a incluirlos desde la lista de abajo.</p>
+				{:else if monitoredAgents.length === 0}<p class="font-display text-sm uppercase tracking-[0.12em]">Todos los contenedores están ignorados</p><p class="mt-1 text-sm text-muted-foreground">Puedes volver a monitorearlos desde la lista de abajo.</p>
 				{:else}<p class="font-display text-sm uppercase tracking-[0.12em]">Ningún contenedor coincide</p><p class="mt-1 text-sm text-muted-foreground">Quitá algún filtro de etiqueta para volver a ver el inventario.</p>{/if}
 			</Card>
 		{/if}
 	</section>
 
-	{#if isAdmin && ignoredAgents.length > 0}
+	{#if ignoredAgents.length > 0}
 		<section class="grid gap-3" aria-labelledby="vps-ignored-title">
 			<div>
-				<p class="page-subtitle font-display uppercase tracking-[0.14em]">Reglas locales</p>
-				<h2 id="vps-ignored-title" class="mt-1 font-display text-base font-semibold">Contenedores excluidos ({ignoredAgents.length})</h2>
-				<p class="mt-1 text-sm text-muted-foreground">Siguen identificados para poder reincorporarlos; no generan métricas nuevas ni alertas.</p>
+				<p class="page-subtitle font-display uppercase tracking-[0.14em]">Excepciones de monitoreo</p>
+				<h2 id="vps-ignored-title" class="mt-1 font-display text-base font-semibold">Contenedores ignorados ({ignoredAgents.length})</h2>
+				<p class="mt-1 text-sm text-muted-foreground">Siguen en el inventario; no reciben métricas nuevas ni generan alertas.</p>
 			</div>
 			<div class="grid gap-2">
 				{#each ignoredAgents as agent (agent.id)}
-					<Card class="flex flex-wrap items-center justify-between gap-3 p-3">
+					<Card class="vps-ignored-card">
 						<div class="min-w-0">
 							<div class="flex flex-wrap items-center gap-2"><h3 class="truncate font-medium">{agent.name}</h3><Badge variant="outline">IGNORADO</Badge></div>
-							<p class="mt-1 truncate font-mono text-xs text-muted-foreground">{agent.container_id ?? `agent #${agent.id}`}</p>
+							<p class="mt-1 truncate text-xs text-muted-foreground">{agent.hostname} · <span class="font-mono">{agent.container_id ?? `contenedor #${agent.id}`}</span></p>
 						</div>
-						<Button variant="action" size="sm" onclick={() => void setIgnored(agent, false)} disabled={updatingAgentID === agent.id}>
-							<Eye size={14} aria-hidden="true" />
-							{updatingAgentID === agent.id ? 'Actualizando…' : 'Volver a incluir'}
-						</Button>
+						<div class="flex flex-wrap justify-end gap-1">
+							<Button variant="ghost" size="sm" onclick={() => openAgentDetails(agent)}>Ver detalle</Button>
+							{#if isAdmin}
+								<Button variant="action" size="sm" onclick={() => void setIgnored(agent, false)} disabled={updatingAgentID === agent.id}>
+									<Eye size={14} aria-hidden="true" />
+									{updatingAgentID === agent.id ? 'Actualizando…' : 'Volver a monitorear'}
+								</Button>
+							{/if}
+						</div>
 					</Card>
 				{/each}
 			</div>
@@ -171,15 +195,19 @@
 	{/if}
 </div>
 
-<Dialog bind:open={ignoreDialogOpen} title="Excluir contenedor del monitoreo">
+{#if detailAgent}
+	<AgentDetailModal agent={detailAgent} bind:open={detailOpen} />
+{/if}
+
+<Dialog bind:open={ignoreDialogOpen} title="Ignorar contenedor">
 	<div class="grid gap-4">
 		<p class="text-sm text-muted-foreground">
-			<span class="font-medium text-foreground">{ignoreTarget?.name}</span> seguirá apareciendo en la lista de excluidos, pero no recibirá nuevas métricas ni alertas de caída o consumo. Los demás contenedores de esta VPS no cambian; las alertas abiertas se resolverán y el historial se conservará.
+			<span class="font-medium text-foreground">{ignoreTarget?.name}</span> seguirá apareciendo en el inventario con la marca <strong class="text-foreground">IGNORADO</strong>. No recibirá métricas nuevas ni generará alertas; los demás contenedores de esta VPS no cambian y el historial existente se conserva.
 		</p>
 		<div class="flex justify-end gap-2">
 			<Button variant="action" onclick={() => { ignoreDialogOpen = false; ignoreTarget = null; }}>Cancelar</Button>
 			<Button variant="action" onclick={() => ignoreTarget && void setIgnored(ignoreTarget, true)} disabled={!ignoreTarget || updatingAgentID === ignoreTarget.id}>
-				{updatingAgentID === ignoreTarget?.id ? 'Actualizando…' : 'Excluir contenedor'}
+				{updatingAgentID === ignoreTarget?.id ? 'Actualizando…' : 'Ignorar monitoreo'}
 			</Button>
 		</div>
 	</div>

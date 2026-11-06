@@ -1,7 +1,13 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { toast } from 'svelte-sonner';
-	import { agentHistory, putThresholds, listAlerts, resolveAlert } from '#lib/api/client.js';
+	import {
+		agentHistory,
+		putThresholds,
+		listAlerts,
+		resolveAlert,
+		putAgentMonitoringIgnored
+	} from '#lib/api/client.js';
 	import type { Agent, HistoryPoint } from '#lib/api/types.js';
 	import { normalizeAlerts, type NormalizedAlert } from '#lib/alerts.js';
 	import { sse, refreshAgents } from '#lib/stores/sse.svelte.js';
@@ -13,7 +19,7 @@
 	import { Label } from '#lib/components/ui/label/index.js';
 	import { Tabs } from '#lib/components/ui/tabs/index.js';
 	import { Badge } from '#lib/components/ui/badge/index.js';
-	import { fmtPct, fmtUptime, fmtAgo, fmtTs, alertTypeLabel, fmtAlertMessage, fmtAlertReading } from '#lib/format.js';
+	import { fmtAgo, fmtTs, alertTypeLabel, fmtAlertMessage, fmtAlertReading } from '#lib/format.js';
 	import { auth } from '#lib/stores/auth.svelte.js';
 	import NotificationPolicyControls from '#lib/components/NotificationPolicyControls.svelte';
 
@@ -30,6 +36,7 @@
 	let { open = $bindable(false), agent }: { open?: boolean; agent: Agent } = $props();
 
 	type TF = '1h' | '6h' | '24h';
+	type DetailPanel = 'overview' | 'history' | 'alerts';
 	/** Ventanas referenciales (mismo stepper que el page detail). */
 	const WINDOW: Record<TF, { span: number; step: number }> = {
 		'1h': { span: 3600, step: 60 },
@@ -41,8 +48,14 @@
 		{ value: '6h', label: '6 h' },
 		{ value: '24h', label: '24 h' }
 	];
+	const PANEL_OPTIONS: { value: DetailPanel; label: string }[] = [
+		{ value: 'overview', label: 'Resumen y ajustes' },
+		{ value: 'history', label: 'Historial' },
+		{ value: 'alerts', label: 'Alertas' }
+	];
 
 	const offline = $derived(agent.status !== 'online');
+	const ignored = $derived(agent.monitoring_ignored);
 	const isAdmin = $derived(auth.user?.role === 'admin');
 	const nowSecs = $state(Math.floor(Date.now() / 1000));
 
@@ -54,6 +67,9 @@
 	let thrCpu = $state('90');
 	let thrRam = $state('95');
 	let savingThr = $state(false);
+	let panel = $state<DetailPanel>('overview');
+	let ignoreConfirmOpen = $state(false);
+	let updatingMonitoring = $state(false);
 
 	async function fetchHistory(id: number): Promise<void> {
 		try {
@@ -100,6 +116,8 @@
 		loadedForId = agent.id;
 		thrCpu = String(agent.thresholds_cpu ?? 90);
 		thrRam = String(agent.thresholds_ram ?? 95);
+		panel = 'overview';
+		ignoreConfirmOpen = false;
 	});
 
 	async function saveThresholds(): Promise<void> {
@@ -151,6 +169,27 @@
 		}
 	}
 
+	async function updateMonitoring(shouldIgnore: boolean): Promise<void> {
+		if (updatingMonitoring) return;
+		updatingMonitoring = true;
+		try {
+			const result = await putAgentMonitoringIgnored(agent.id, shouldIgnore);
+			if (!result.ok) {
+				toast.error('No se pudo actualizar el monitoreo', { description: result.error ?? `Error HTTP ${result.status}` });
+				return;
+			}
+			ignoreConfirmOpen = false;
+			toast.success(shouldIgnore ? 'Contenedor ignorado' : 'Contenedor incluido en el monitoreo', {
+				description: shouldIgnore ? 'Seguirá visible en la lista como ignorado.' : 'Volverá a generar métricas y alertas.'
+			});
+			await refreshAgents();
+		} catch {
+			toast.error('No se pudo conectar con el dashboard');
+		} finally {
+			updatingMonitoring = false;
+		}
+	}
+
 	function openFullPage(): void {
 		open = false;
 		goto(`/agents/${agent.id}`);
@@ -169,213 +208,105 @@
 <Dialog
 	bind:open
 	title={offline ? `${agent.name} — OFFLINE` : agent.name}
-	contentClass="w-[min(96vw,980px)] h-[80vh] max-h-[800px]"
+	contentClass="w-[min(96vw,1120px)] h-[84vh] max-h-[900px]"
 >
 	{#if open}
-		<div class="flex h-full min-h-0 flex-col gap-3">
-			<!-- DOS COLUMNAS: reset compacto (izq) · Historial (der) -->
-			<div class="grid min-h-0 flex-1 gap-4 min-[880px]:grid-cols-2">
-				<!-- Izquierda: header + métricas + thresholds + labels -->
-				<div class="min-h-0">
-					<div class="grid gap-4">
-						<div>
-							<p class="truncate text-[13px] text-muted-foreground">
-								{agent.hostname}
-								{#if agent.container_id}
-									· {agent.container_id.slice(0, 12)}
-								{/if}
-							</p>
-							<div class="mt-1 flex items-center gap-2">
-								{#if offline}
-									<Badge variant="destructive">OFFLINE</Badge>
-									<span class="text-xs text-muted-foreground">
-										visto {fmtAgo(agent.last_seen, nowSecs)}
-									</span>
-								{:else}
-									<Badge variant="default">ONLINE</Badge>
-									<span class="text-xs text-muted-foreground">
-										{fmtAgo(agent.last_seen, nowSecs)} · intervalo {agent.interval}s
-									</span>
-								{/if}
-							</div>
+		<div class="agent-detail-layout">
+			<div class="agent-detail-top">
+				<div class="agent-detail-identity">
+					<div class="min-w-0">
+						<p class="agent-detail-host">{agent.hostname}{#if agent.container_id} · <span title={agent.container_id}>{agent.container_id.slice(0, 12)}</span>{/if}</p>
+						<div class="mt-2 flex flex-wrap items-center gap-2">
+							{#if ignored}<Badge variant="outline">IGNORADO</Badge>{:else if offline}<Badge variant="destructive">OFFLINE</Badge>{:else}<Badge variant="default">ONLINE</Badge>{/if}
+							<span class="text-xs text-muted-foreground">{ignored ? 'Monitoreo pausado' : `Visto ${fmtAgo(agent.last_seen, nowSecs)} · intervalo ${agent.interval}s`}</span>
 						</div>
+					</div>
+					<Tabs class="agent-detail-tabs" options={PANEL_OPTIONS} bind:value={panel} />
+				</div>
+				{#if agent.tags?.length || agent.container_tags?.length}
+					<div class="flex flex-wrap gap-1.5">
+						{#each agent.tags ?? [] as tg (`system-${tg}`)}<a href={`/tags/${encodeURIComponent(tg)}`} class="agent-detail-tag" title={`Ver contenedores con la etiqueta ${tg}`}>{tg}</a>{/each}
+						{#each agent.container_tags ?? [] as tg (`manual-${tg}`)}<a href={`/tags/${encodeURIComponent(tg)}`} class="agent-detail-tag agent-detail-tag--manual" title={`Ver contenedores con la etiqueta ${tg}`}>{tg}</a>{/each}
+					</div>
+				{/if}
+			</div>
 
-						{#if agent.tags && agent.tags.length > 0}
-							<div class="flex flex-wrap gap-1">
-								{#each agent.tags as tg (tg)}
-									<a
-										href={`/tags/${encodeURIComponent(tg)}`}
-										class="rounded-full border border-secondary/40 bg-secondary/15 px-2 py-px text-[10px] text-secondary transition-colors hover:border-primary/50 hover:bg-primary/10 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-										title={`Ver todas las instancias con tag ${tg}`}
-									>
-										{tg}
-									</a>
-								{/each}
-							</div>
-						{/if}
+			<div class="agent-detail-content">
+				{#if panel === 'overview'}
+					<div class="agent-overview-grid">
+						<section class="agent-panel-card agent-metrics-panel">
+							<header class="agent-panel-heading"><div><p class="agent-panel-eyebrow">Estado actual</p><h3>Métricas</h3></div><span class="text-xs text-muted-foreground">{ignored ? 'Últimos datos guardados' : offline ? 'Última muestra' : 'En tiempo real'}</span></header>
+							<AgentMetrics agent={agent} muted={offline || ignored} />
+						</section>
 
-						<AgentMetrics agent={agent} muted={offline} />
-
-						<!-- thresholds editables inline (misma lógica que /agents/[id]) -->
-						<div class="rounded-lg border border-border bg-muted/30 p-3">
-							<p class="text-[11px] uppercase tracking-wider text-muted-foreground">
-								Umbrales de alerta automáticos
-							</p>
-							<p class="mt-1 text-xs text-muted-foreground">
-				Las alertas CPU/RAM quedan registradas en el panel. Los avisos externos de consumo se controlan abajo.
-				Valores iniciales: CPU 90% · RAM 95%.
-							</p>
-							<div class="mt-2 grid grid-cols-2 gap-3">
-								<div class="grid gap-1">
-									<Label>CPU % (10–100)</Label>
-									<Input bind:value={thrCpu} type="number" min="10" max="100" />
+						{#if !ignored}
+							<section class="agent-panel-card">
+								<header class="agent-panel-heading"><div><p class="agent-panel-eyebrow">Reglas automáticas</p><h3>Umbrales de consumo</h3></div></header>
+								<p class="agent-panel-copy">El panel registra alertas cuando CPU o RAM supera estos límites. Los avisos externos se configuran por separado.</p>
+								<div class="agent-threshold-fields">
+									<div class="grid gap-1.5"><Label>CPU % <span class="text-muted-foreground">(10–100)</span></Label><Input bind:value={thrCpu} type="number" min="10" max="100" /></div>
+									<div class="grid gap-1.5"><Label>RAM % <span class="text-muted-foreground">(50–100)</span></Label><Input bind:value={thrRam} type="number" min="50" max="100" /></div>
 								</div>
-								<div class="grid gap-1">
-									<Label>RAM % (50–100)</Label>
-									<Input bind:value={thrRam} type="number" min="50" max="100" />
-								</div>
-							</div>
-							<Button
-								variant="action"
-								size="sm"
-								class="mt-3"
-								onclick={() => void saveThresholds()}
-								disabled={savingThr}
-							>
-								{savingThr ? 'Guardando…' : 'Guardar umbrales'}
-							</Button>
-						</div>
-						{#if isAdmin}
-							<NotificationPolicyControls scope="agent" scopeId={agent.id} compact />
+								<Button variant="action" size="sm" class="mt-3" onclick={() => void saveThresholds()} disabled={savingThr}>{savingThr ? 'Guardando…' : 'Guardar umbrales'}</Button>
+							</section>
+							{#if isAdmin}<NotificationPolicyControls scope="agent" scopeId={agent.id} compact />{/if}
+						{:else}
+							<section class="agent-monitoring-paused"><p class="agent-panel-eyebrow">Monitoreo pausado</p><p>Este contenedor permanece visible, pero no recibe métricas nuevas ni genera alertas.</p></section>
 						{/if}
 
 						{#if agent.labels && Object.keys(agent.labels).length > 0}
-							<div>
-								<p class="text-[11px] uppercase tracking-wider text-muted-foreground">Labels</p>
-								<div class="mt-1 flex flex-wrap gap-1">
-									{#each Object.entries(agent.labels) as [k, v] (`${k}=${v}`)}
-										<span
-											class="rounded-full border border-secondary/40 bg-secondary/10 px-2 py-px text-[10px] text-secondary"
-										>
-											{k}: {v}
-										</span>
-									{/each}
-								</div>
-							</div>
+							<section class="agent-panel-card"><header class="agent-panel-heading"><div><p class="agent-panel-eyebrow">Docker</p><h3>Labels</h3></div></header><div class="flex flex-wrap gap-1.5">{#each Object.entries(agent.labels) as [k, v] (`${k}=${v}`)}<span class="agent-detail-label">{k}: {v}</span>{/each}</div></section>
+						{/if}
+
+						{#if isAdmin}
+							<section class="agent-monitoring-control">
+								<div class="min-w-0"><p class="font-medium">{ignored ? 'Este contenedor está ignorado' : 'Control de monitoreo'}</p><p class="mt-1 text-xs text-muted-foreground">{ignored ? 'El registro y el historial se conservan. Puedes volver a incluirlo en cualquier momento.' : 'Ignorarlo no lo detiene ni lo elimina de Docker; solo pausa la recolección y sus alertas.'}</p></div>
+								{#if ignored}
+									<Button variant="action" size="sm" onclick={() => void updateMonitoring(false)} disabled={updatingMonitoring}>{updatingMonitoring ? 'Actualizando…' : 'Volver a monitorear'}</Button>
+								{:else if ignoreConfirmOpen}
+									<div class="agent-ignore-confirm"><span>¿Ignorar {agent.name}?</span><Button variant="ghost" size="sm" onclick={() => (ignoreConfirmOpen = false)} disabled={updatingMonitoring}>Cancelar</Button><Button variant="action" size="sm" onclick={() => void updateMonitoring(true)} disabled={updatingMonitoring}>{updatingMonitoring ? 'Actualizando…' : 'Confirmar'}</Button></div>
+								{:else}
+									<Button variant="ghost" size="sm" onclick={() => (ignoreConfirmOpen = true)}>Ignorar monitoreo</Button>
+								{/if}
+							</section>
 						{/if}
 					</div>
-				</div>
-
-				<!-- Derecha: Historial -->
-				<div class="min-h-0">
-					<div class="grid gap-3">
-						<div class="flex items-center justify-between gap-2">
-							<h4 class="font-display text-sm font-semibold uppercase tracking-[0.14em]">
-								Historial
-							</h4>
-							<Tabs options={TF_OPTIONS} bind:value={tf} />
-						</div>
-
-						<!-- CPU % + RAM MB en un chart (límite dashed si reporta) -->
-						<UplotChart
-							times={gx}
-							height={170}
-							series={[
-								{
-									label: 'CPU %',
-									values: cpuData,
-									color: 'hsl(42 85% 52%)',
-									unit: '%',
-									digits: 1,
-									fillAlpha: 0.08
-								},
-								{
-									label: 'RAM usada',
-									values: ramUsed,
-									color: 'hsl(187 80% 45%)',
-									unit: 'MB',
-									digits: 1,
-									fillAlpha: 0.08
-								},
-								{
-									label: 'RAM límite',
-									values: ramLimit,
-									color: 'hsl(240 8% 56%)',
-									dash: [6, 4],
-									unit: 'MB',
-									digits: 0
-								}
-							]}
-						/>
-
-						<!-- RED mini (rx/tx) -->
-						<UplotChart
-							times={gx}
-							height={110}
-							series={[
-								{ label: 'Rx recibida', values: rxData, color: 'hsl(187 80% 45%)', unit: 'MB', digits: 1, fillAlpha: 0.08 },
-								{ label: 'Tx enviada', values: txData, color: 'hsl(42 85% 52%)', unit: 'MB', digits: 1 }
-							]}
-						/>
-
-						<!-- Timeline de alertas del agent -->
-						<div class="rounded-lg border border-border bg-muted/30 p-3">
-							<div class="flex items-center justify-between gap-2">
-								<p class="text-[11px] uppercase tracking-wider text-muted-foreground">
-									Alertas — {openAlerts.length} abierta(s) de {alerts.length}
-								</p>
-								<span class="text-[10px] tabular-nums text-muted-foreground">
-									visto {fmtAgo(agent.last_seen, nowSecs)} · uptime {fmtUptime(agent.metrics?.uptime_sec)}
-								</span>
+				{:else if panel === 'history'}
+					<section class="agent-panel-card agent-history-panel">
+						<header class="agent-panel-heading"><div><p class="agent-panel-eyebrow">Uso del contenedor</p><h3>Historial de métricas</h3></div><Tabs options={TF_OPTIONS} bind:value={tf} /></header>
+						{#if hist.length > 0}
+							<div class="agent-history-charts">
+								<div class="agent-chart-card"><p class="agent-panel-eyebrow">CPU y memoria</p><UplotChart times={gx} height={220} series={[{ label: 'CPU %', values: cpuData, color: 'hsl(42 85% 52%)', unit: '%', digits: 1, fillAlpha: 0.08 }, { label: 'RAM usada', values: ramUsed, color: 'hsl(187 80% 45%)', unit: 'MB', digits: 1, fillAlpha: 0.08 }, { label: 'RAM límite', values: ramLimit, color: 'hsl(240 8% 56%)', dash: [6, 4], unit: 'MB', digits: 0 }]} /></div>
+								<div class="agent-chart-card"><p class="agent-panel-eyebrow">Tráfico de red</p><UplotChart times={gx} height={180} series={[{ label: 'Recibido', values: rxData, color: 'hsl(187 80% 45%)', unit: 'MB', digits: 1, fillAlpha: 0.08 }, { label: 'Enviado', values: txData, color: 'hsl(42 85% 52%)', unit: 'MB', digits: 1 }]} /></div>
 							</div>
-							<div class="mt-2 grid gap-2">
+						{:else}
+							<div class="agent-history-empty"><p class="font-medium">Todavía no hay muestras en este período</p><p class="mt-1 text-sm text-muted-foreground">Prueba con una ventana más amplia o vuelve cuando haya nuevos datos.</p></div>
+						{/if}
+					</section>
+				{:else}
+					<section class="agent-panel-card agent-alerts-panel">
+						<header class="agent-panel-heading"><div><p class="agent-panel-eyebrow">Eventos del contenedor</p><h3>Alertas</h3></div><Badge variant={openAlerts.length ? 'destructive' : 'outline'}>{openAlerts.length} abiertas · {alerts.length} total</Badge></header>
+						{#if alerts.length > 0}
+							<div class="agent-alert-list">
 								{#each alerts as alert (alert.id)}
-									<div
-										class="flex items-start justify-between gap-3 border-b border-border/60 pb-2 last:border-b-0"
-									>
-										<div class="min-w-0">
-											<div class="flex items-center gap-2">
-												<Badge variant={alert.resolved_at ? 'outline' : 'destructive'}>
-													{alertTypeLabel(alert.type)}
-												</Badge>
-												<span class="truncate text-[13px] text-muted-foreground">
-														{fmtAlertMessage(alert.message)}
-												</span>
-											</div>
-											<p class="mt-0.5 text-[11px] text-muted-foreground">
-								{fmtAlertReading(alert.type, alert.value)} ·
-												{fmtTs(alert.fired_at)}
-												{alert.resolved_at ? ' · resuelta ' + fmtTs(alert.resolved_at) : ' · abierta'}
-											</p>
-										</div>
-										{#if !alert.resolved_at}
-													<Button
-														variant="action"
-														class="h-7 shrink-0 px-2 text-xs"
-														title="Cierra este registro; no desactiva las reglas automáticas"
-														onclick={() => void resolveAlertRow(alert.id)}
-													>
-														Cerrar alerta
-													</Button>
-										{/if}
-									</div>
-								{:else}
-									<p class="text-[13px] text-muted-foreground">
-										Sin alertas registradas para este agent.
-									</p>
+									<article class="agent-alert-row" class:agent-alert-row--resolved={!!alert.resolved_at}>
+										<div class="min-w-0"><div class="flex flex-wrap items-center gap-2"><Badge variant={alert.resolved_at ? 'outline' : 'destructive'}>{alertTypeLabel(alert.type)}</Badge><span class="text-sm font-medium">{fmtAlertMessage(alert.message)}</span></div><p class="mt-2 text-xs text-muted-foreground">{fmtAlertReading(alert.type, alert.value)} · {fmtTs(alert.fired_at)}{alert.resolved_at ? ` · marcada resuelta ${fmtTs(alert.resolved_at)}` : ' · abierta'}</p></div>
+										{#if !alert.resolved_at}<Button variant="ghost" size="sm" class="shrink-0" title="Marca este evento como resuelto; las reglas siguen activas" onclick={() => void resolveAlertRow(alert.id)}>Marcar resuelta</Button>{/if}
+									</article>
 								{/each}
 							</div>
-						</div>
-					</div>
-				</div>
+						{:else}
+							<div class="agent-history-empty"><p class="font-medium">Sin alertas registradas</p><p class="mt-1 text-sm text-muted-foreground">Las alertas que se generen aparecerán aquí.</p></div>
+						{/if}
+					</section>
+				{/if}
 			</div>
 		</div>
 	{/if}
 	{#snippet footer()}
 		{#if open}
 			<div class="flex items-center justify-end gap-2">
-				<Button variant="action" onclick={() => (open = false)}>Cerrar</Button>
-				<Button variant="action" onclick={openFullPage}>Ver página completa</Button>
+				<Button variant="action" onclick={openFullPage}>Abrir detalle completo</Button>
 			</div>
 		{/if}
 	{/snippet}

@@ -2,7 +2,10 @@
 	import Anchor from '@lucide/svelte/icons/anchor';
 	import ArrowDown from '@lucide/svelte/icons/arrow-down';
 	import ArrowUp from '@lucide/svelte/icons/arrow-up';
+	import Eye from '@lucide/svelte/icons/eye';
 	import RefreshCw from '@lucide/svelte/icons/refresh-cw';
+	import { toast } from 'svelte-sonner';
+	import { putAgentMonitoringIgnored } from '#lib/api/client.js';
 	import { auth } from '#lib/stores/auth.svelte.js';
 	import { sse, refreshAgents } from '#lib/stores/sse.svelte.js';
 	import AgentCard from '#lib/components/AgentCard.svelte';
@@ -51,6 +54,7 @@
 	let detailAgentId = $state<number | null>(null);
 	let detailOpen = $state(false);
 	let tokenModalOpen = $state(false);
+	let updatingIgnoredID = $state<number | null>(null);
 
 	function readView(): ViewMode {
 		// ssr=false pero el prerender del shell puede correr fuera de window → guard
@@ -113,7 +117,7 @@
 
 	/** El agent del modal SIEMPRE vivo: resuelto de la lista SSE en cada tick. */
 	const detailAgent = $derived(
-		detailAgentId == null ? null : (agents.find((a) => a.id === detailAgentId) ?? null)
+		detailAgentId == null ? null : (allAgents.find((a) => a.id === detailAgentId) ?? null)
 	);
 
 	function openDetails(a: Agent): void {
@@ -138,6 +142,23 @@
 
 	function onTokenCreated(): void {
 		void refreshAgents(); // el token fuerza auto-registro al primer beat; refresca igual
+	}
+
+	async function setIgnored(agent: Agent, ignored: boolean): Promise<void> {
+		updatingIgnoredID = agent.id;
+		try {
+			const result = await putAgentMonitoringIgnored(agent.id, ignored);
+			if (!result.ok) {
+				toast.error('No se pudo actualizar el monitoreo', { description: result.error ?? `Error HTTP ${result.status}` });
+				return;
+			}
+			toast.success(ignored ? 'Contenedor ignorado' : 'Contenedor incluido en el monitoreo');
+			await refreshAgents();
+		} catch {
+			toast.error('No se pudo conectar con el dashboard');
+		} finally {
+			updatingIgnoredID = null;
+		}
 	}
 
 	/* ------------------- onboarding: una VPS, un Stowaway ------------------- */
@@ -503,7 +524,7 @@
 		<!-- Grid de cards: auto-fill con mínimo 300px (desktop-first) -->
 		<div class="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-4">
 			{#each filtered as agent (agent.id)}
-				<AgentCard {agent} />
+				<AgentCard {agent} onDetails={() => openDetails(agent)} />
 			{:else}
 				<p class="py-8 text-sm text-muted-foreground">
 					{#if tagFilter.length > 0}
@@ -514,6 +535,41 @@
 				</p>
 			{/each}
 		</div>
+	{/if}
+
+	{#if ignoredAgents.length > 0}
+		<section class="dashboard-ignored" aria-labelledby="ignored-containers-title">
+			<header class="dashboard-ignored-heading">
+				<div>
+					<p class="page-subtitle font-display uppercase tracking-[0.14em]">Inventario visible</p>
+					<h2 id="ignored-containers-title" class="mt-1 font-display text-base font-semibold">Contenedores ignorados</h2>
+				</div>
+				<Badge variant="outline">{ignoredAgents.length} ignorado(s)</Badge>
+			</header>
+			<p class="text-sm text-muted-foreground">Siguen listados para que puedas identificarlos y volver a monitorearlos. No generan nuevas alertas ni métricas.</p>
+			<div class="dashboard-ignored-grid">
+				{#each ignoredAgents as agent (agent.id)}
+					<Card class="dashboard-ignored-card">
+						<div class="min-w-0">
+							<div class="flex flex-wrap items-center gap-2">
+								<h3 class="truncate text-sm font-semibold">{agent.name}</h3>
+								<Badge variant="outline">IGNORADO</Badge>
+							</div>
+							<p class="mt-1 truncate text-xs text-muted-foreground">{agent.hostname} · {agent.container_id?.slice(0, 12) ?? `contenedor #${agent.id}`}</p>
+						</div>
+						<div class="flex flex-wrap justify-end gap-1">
+							<Button variant="ghost" size="sm" onclick={() => openDetails(agent)}>Ver detalle</Button>
+							{#if isAdmin}
+								<Button variant="ghost" size="sm" onclick={() => void setIgnored(agent, false)} disabled={updatingIgnoredID === agent.id}>
+									<Eye size={14} aria-hidden="true" />
+									{updatingIgnoredID === agent.id ? 'Actualizando…' : 'Volver a monitorear'}
+								</Button>
+							{/if}
+						</div>
+					</Card>
+				{/each}
+			</div>
+		</section>
 	{/if}
 </div>
 
