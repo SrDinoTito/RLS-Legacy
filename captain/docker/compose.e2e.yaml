@@ -1,0 +1,23 @@
+# `compose.e2e.yaml` — override SOLO para el e2e (TASK-008 AC-001..006).
+#
+# PROBLEMA (regresion): el compose principal bind-monta ./data:/data en el
+# backend → el e2e -p rls-e2e terminaba montando la DB REAL del usuario
+# (captain/data/rls.db) → bootstrap devolvia 403 porque ya existian usuarios.
+#
+# SOLUCION: DB PROPIA efimera en un volumen named (rls-e2e-data). Compose v2
+# hace launch de mounts por `target`: un mount con el MISMO target en un
+# archivo posterior gana fuese cual fuese su tipo, o sea este volumen named
+# REEMPLAZA al bind ./data:/data del compose.yaml (verificado con
+# `docker compose config --format json`: backend queda solo con
+# rls-e2e_rls-e2e-data:/data, sin el bind).
+#
+# USE: docker compose -f compose.yaml -f docker/compose.e2e.yaml -p rls-e2e up
+# (asi lo hace captain/scripts/e2e-compose.sh). `down -v` del script borra el
+# volumen automaticamente.
+#
+# NO tocar el compose principal ni su .env (regla de la tarea).
+services:
+  backend:
+    volumes: ["rls-e2e-data:/data"]
+volumes:
+  rls-e2e-data:

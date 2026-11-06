@@ -1,0 +1,37 @@
+# rls-legacy — ejemplo plug&play de un agente (explorer) reportando al
+# dashboard (captain). Requiere que el stack del dashboard esté corriendo
+# (captain/docker compose up -d) — usa su red y su service `backend`.
+#
+# Ejecutar con el cwd en ESTA carpeta (example/): docker compose lee el .env
+# del directorio donde vive el archivo compose (comando: docker compose -f
+# example/docker-compose.yaml ... => project dir = example/, ahí busca .env).
+#
+# 1) Creá un token en el dashboard (Admin -> Tokens) con tag si querés
+# 2) cp .env.example .env  y pegá el token en RLS_TOKEN
+# 3) docker compose up -d
+# 4) El agente aparece ONLINE en el dashboard con sus tags.
+
+services:
+  demo-app:
+    image: alpine:3.20
+    entrypoint: ["/bin/sh","-c"]
+    command: ["/usr/local/bin/explorer.sh & exec \"$0\" \"$@\"","sh","-c","while :; do sleep 30; done"]
+    volumes:
+      - ../explorer/explorer.sh:/usr/local/bin/explorer.sh:ro
+    environment:
+      RLS_DASHBOARD_URL: http://backend:8080
+      RLS_TOKEN: ${RLS_TOKEN:?set in .env or export}
+      RLS_INTERVAL: "10"
+      RLS_NAME: ${RLS_NAME:-demo-app}
+    restart: unless-stopped
+    mem_limit: 32m
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+networks:
+  default:
+    external: true
+    name: rls-legacy_default

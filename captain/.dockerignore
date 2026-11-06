@@ -1,0 +1,16 @@
+# .dockerignore del contexto captain/ (TASK-008): mantiene el contexto de build
+# liviano y garantiza que node_modules/bin/binarios con binarios de Windows no
+# entren a la imagen (CON-007: los artefactos se generan dentro de Docker).
+frontend/node_modules
+frontend/build
+frontend/.svelte-kit
+backend/bin
+backend/server
+backend/data
+data
+backups
+**/*.db
+**/*.db-wal
+**/*.db-shm
+**/E
+.git

@@ -1,0 +1,20 @@
+* text=auto
+
+# Scripts are executed by POSIX shells on Linux hosts.
+*.sh text eol=lf
+*.bash text eol=lf
+
+# Keep the key config/document formats normalized across Windows and Linux.
+*.go text eol=lf
+*.mod text eol=lf
+*.sum text eol=lf
+*.svelte text eol=lf
+*.ts text eol=lf
+*.css text eol=lf
+*.json text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.md text eol=lf
+*.svg text eol=lf
+*.html text eol=lf
+*.txt text eol=lf

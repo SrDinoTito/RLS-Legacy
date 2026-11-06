@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 540 120" role="img" aria-labelledby="title desc">
+	<title id="title">RLS Legacy</title>
+	<desc id="desc">Marca de RLS Legacy</desc>
+	<defs>
+		<radialGradient id="space" cx="50%" cy="42%" r="65%">
+			<stop offset="0" stop-color="#14243a" />
+			<stop offset="1" stop-color="#070b12" />
+		</radialGradient>
+	</defs>
+	<circle cx="62" cy="60" r="49" fill="url(#space)" stroke="#f5b936" stroke-width="2" />
+	<circle cx="62" cy="60" r="38" fill="none" stroke="#14d7ef" stroke-opacity=".55" />
+	<circle cx="62" cy="60" r="27" fill="none" stroke="#14d7ef" stroke-opacity=".32" stroke-dasharray="1 4" />
+	<path d="M62 22v9m0 58v9M24 60h9m58 0h9" stroke="#f5b936" stroke-opacity=".8" />
+	<path d="m62 17 8.4 34.6L105 60l-34.6 8.4L62 103l-8.4-34.6L19 60l34.6-8.4Z" fill="none" stroke="#f5b936" stroke-linejoin="round" stroke-width="1.5" />
+	<path d="m62 32 5.7 22.3L90 60l-22.3 5.7L62 88l-5.7-22.3L34 60l22.3-5.7Z" fill="#f5b936" fill-opacity=".14" stroke="#f5b936" stroke-opacity=".75" />
+	<circle cx="62" cy="60" r="3" fill="#14d7ef" />
+	<text x="137" y="61" fill="#e8b33c" font-family="Arial, Helvetica, sans-serif" font-size="31" font-weight="700" letter-spacing="7">RLS LEGACY</text>
+</svg>

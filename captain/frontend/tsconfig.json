@@ -1,0 +1,17 @@
+{
+	"extends": "$app/tsconfig",
+	"compilerOptions": {
+		"strict": true
+	},
+	"include": ["src", "vite.config.ts"],
+	"exclude": [
+		// corridos por `bun` bajo el runtime de Bun (bun:test / process, fuera del dominio svelte-check):
+		"src/lib/api/client.test.ts",
+		"src/lib/alerts.test.ts",
+		"src/lib/format.test.ts",
+		"src/lib/compose.test.ts",
+		"src/lib/tags.test.ts",
+		"src/lib/vps.test.ts",
+		"src/lib/api/ui-sanity.ts"
+	]
+}

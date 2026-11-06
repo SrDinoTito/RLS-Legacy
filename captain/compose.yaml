@@ -1,0 +1,72 @@
+# rls-legacy — compose del dashboard (captain). REQ-030/031, TASK-008, DEC-006.
+#
+# Despliegue: cp compose.env.example .env  →  docker compose up -d --build
+# Extreme-lightweight: imágenes alpine multi-stage, límites por servicio,
+# logs rotados 5MB × 2 en TODOS los servicios.
+name: rls-legacy
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+    image: rls-captain-backend
+    environment:
+      RLS_DB_PATH: /data/rls.db
+      RLS_PORT: "8080"
+      # Sin secret → sesiones efímeras y warning en el log (default dev).
+      RLS_JWT_SECRET: ${RLS_JWT_SECRET:-}
+      RLS_RETENTION_DAYS: ${RLS_RETENTION_DAYS:-7}
+      RLS_OFFLINE_TICK_SEC: ${RLS_OFFLINE_TICK_SEC:-10}
+      # REQ-050: canales de notificación de alertas (vacío = inerte).
+      RLS_NOTIF_DISCORD_WEBHOOK_URL: ${RLS_NOTIF_DISCORD_WEBHOOK_URL:-}
+      RLS_NOTIF_TELEGRAM_BOT_TOKEN: ${RLS_NOTIF_TELEGRAM_BOT_TOKEN:-}
+      RLS_NOTIF_TELEGRAM_CHAT_ID: ${RLS_NOTIF_TELEGRAM_CHAT_ID:-}
+      # RLS_PUBLIC_URL: tu URL pública del dashboard (TLS o localhost);
+      # cuando está seteada, las notificaciones llevan link directo al panel.
+      RLS_PUBLIC_URL: ${RLS_PUBLIC_URL:-}
+    volumes:
+      # REQ-060 (TASK-014): DB en carpeta VISIBLE del host (captain/data/rls.db)
+      # para que scripts de backup/restore funcionen directo con docker run.
+      - ./data:/data
+      # NOTA: el volumen named `rls-legacy_rls-data` queda como snapshot
+      # PRE-MIGRACIÓN (no se consume más). Borrarlo a mano con:
+      #   docker volume rm rls-legacy_rls-data
+      # (solo cuando confirmes que los backups en captain/backups/ alcanzan).
+    mem_limit: 128m
+    cpus: 0.5
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/healthz || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/frontend.Dockerfile
+    image: rls-captain-frontend
+    ports:
+      - "${RLS_PORT:-3008}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    mem_limit: 64m
+    cpus: 0.25
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+# (REQ-060: ya no hay volumen named en uso — la DB vive en captain/data/
+# bind-mounted. El volumen `rls-legacy_rls-data` suelto queda afuera de este
+# compose como snapshot pre-migración.)

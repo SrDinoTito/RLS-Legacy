@@ -1,0 +1,57 @@
+# --- Go (backend) ---
+captain/backend/bin/
+*.exe
+*.test
+*.out
+# SQLite (dev local; en runtime vive en captain/data/ bind-mount — TASK-014)
+*.db
+*.sqlite
+*.sqlite3
+*.db-wal
+*.db-shm
+captain/backend/data/
+# DB runtime (bind mount captain/data) + snapshots de backup.sh (REQ-060)
+captain/data/
+captain/backups/
+
+# --- Node / Bun / SvelteKit (frontend) ---
+node_modules/
+.svelte-kit/
+dist/
+build/
+.vite/
+# Local credentials and environment overrides; keep only checked-in examples.
+.env
+.env.*
+*.env
+!.env.example
+# Generated test reports, logs, scratch output, and coverage artifacts.
+coverage/
+.nyc_output/
+playwright-report/
+test-results/
+*.log
+*.log.*
+*.tmp
+*.temp
+*.prof
+*.cover
+# Private certificate/key material.
+*.pem
+*.key
+*.p12
+*.pfx
+captain/frontend/out.txt
+
+# --- Editor / OS ---
+.vscode/
+.idea/
+*.swp
+*.swo
+Thumbs.db
+.DS_Store
+
+# Internal agent context and GitHub Actions are not published.
+.agents/
+.github/workflows/
+AGENTS.md
