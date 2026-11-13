@@ -1,8 +1,6 @@
 package api
 
 import (
-	"fmt"
-	"net"
 	"net/http"
 	"path/filepath"
 	"regexp"
@@ -10,9 +8,11 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/rls-legacy/captain/backend/internal/bridge"
+	"github.com/rls-legacy/captain/backend/internal/store"
 )
 
 var downloadHostPattern = regexp.MustCompile(`^(?:[A-Za-z0-9.-]+(?::[0-9]{1,5})?|\[[0-9A-Fa-f:]+\](?::[0-9]{1,5})?)$`)
+var installTokenPattern = regexp.MustCompile(`^rlst_[A-Za-z0-9_-]+$`)
 
 func (s *Server) handleBridgeInstallScript(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -20,10 +20,14 @@ func (s *Server) handleBridgeInstallScript(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	host := strings.TrimSpace(r.Host)
-	defaultURL, err := dashboardBaseURL(host, r.Header.Get("X-Forwarded-Proto"))
+	dashboardURL, err := NormalizeDashboardURL(s.dashboardURL)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid host")
+		writeError(w, http.StatusServiceUnavailable, "RLS_PUBLIC_URL is not configured")
+		return
+	}
+	token, _ := r.Context().Value(ctxKeyToken{}).(*store.Token)
+	if token == nil || !token.TokenPlain.Valid || !installTokenPattern.MatchString(token.TokenPlain.String) {
+		writeError(w, http.StatusForbidden, "token cannot be used for VPS installation")
 		return
 	}
 
@@ -32,32 +36,15 @@ func (s *Server) handleBridgeInstallScript(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusInternalServerError, "installer unavailable")
 		return
 	}
-	// The host has been restricted to DNS/IP characters above, so it is safe
-	// to insert as a single-quoted POSIX shell string literal.
-	body := strings.ReplaceAll(string(script), "@@DASHBOARD_URL@@", defaultURL)
+	// Both values are strictly validated before insertion into single-quoted
+	// shell literals: the URL allows only an origin and the token is allowlisted.
+	body := strings.ReplaceAll(string(script), "@@DASHBOARD_URL@@", dashboardURL)
+	body = strings.ReplaceAll(body, "@@TOKEN@@", token.TokenPlain.String)
 	w.Header().Set("Content-Type", "text/x-shellscript; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(body))
-}
-
-func localRequestHost(host string) bool {
-	name := host
-	if strings.HasPrefix(name, "[") {
-		if parsed, _, err := net.SplitHostPort(host); err == nil {
-			name = parsed
-		} else {
-			name = strings.Trim(name, "[]")
-		}
-	} else if parsed, _, err := net.SplitHostPort(host); err == nil {
-		name = parsed
-	}
-	if strings.EqualFold(name, "localhost") || strings.HasSuffix(strings.ToLower(name), ".localhost") {
-		return true
-	}
-	ip := net.ParseIP(name)
-	return ip != nil && ip.IsLoopback()
 }
 
 func (s *Server) handleBridgeDownload(w http.ResponseWriter, r *http.Request) {
@@ -77,24 +64,8 @@ func (s *Server) handleBridgeDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", contentType)
-	w.Header().Set("Cache-Control", "public, max-age=300")
+	w.Header().Set("Cache-Control", "private, no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	path := filepath.Join(s.downloadDir, filename)
 	http.ServeFile(w, r, path)
-}
-
-// dashboardBaseURL validates and returns the base URL used by the installer's
-// default value. Kept small and explicit to make proxy-host safety auditable.
-func dashboardBaseURL(host, forwardedProto string) (string, error) {
-	if !downloadHostPattern.MatchString(host) {
-		return "", fmt.Errorf("invalid host")
-	}
-	scheme := "https"
-	if strings.EqualFold(forwardedProto, "http") && localRequestHost(host) {
-		scheme = "http"
-	}
-	if forwardedProto == "" && localRequestHost(host) {
-		scheme = "http"
-	}
-	return scheme + "://" + host, nil
 }

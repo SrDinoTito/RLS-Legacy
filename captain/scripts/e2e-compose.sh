@@ -63,6 +63,7 @@ size_mb() { # "30.4MB" → 30 | "1.2GB" → 1228
 dcompose() {
   docker compose -p "$PROJ" \
     -f "$COMPOSE_WIN/compose.yaml" \
+    -f "$COMPOSE_WIN/compose.dev.yaml" \
     -f "$COMPOSE_WIN/docker/compose.e2e.yaml" \
     "$@"
 }
@@ -91,6 +92,7 @@ docker volume create "$VOL_COOKIES" >/dev/null || fail "volume cookies"
 export RLS_JWT_SECRET='e2e-compose-secret-0123456789abcdef'
 export RLS_RETENTION_DAYS=7
 export RLS_PORT="$PORT"
+export RLS_PUBLIC_URL="http://localhost:$PORT"
 # tick offline 5s: AC-003 (3×5s=15s + sweep ≤5s ⇒ ~20s) sin esperar 30s+.
 export RLS_OFFLINE_TICK_SEC=5
 
@@ -120,21 +122,21 @@ runc() { # HTTP contra el stack, DENTRO de la red del compose
     curlimages/curl:latest "$@"
 }
 
-# --- paso 2: tamaños de imagen (objetivo: backend ≤35MB, frontend ≤40MB) -------
+# --- paso 2: tamaños de imagen (el runtime Bun incluye el servidor HTTP) -------
 say "paso 2: tamaños de imagen"
-BE_IMG="$(docker images --format '{{.Repository}}:{{.Tag}} {{.Size}}' rls-captain-backend | head -1)"
-FE_IMG="$(docker images --format '{{.Repository}}:{{.Tag}} {{.Size}}' rls-captain-frontend | head -1)"
-[ -n "$BE_IMG" ] && [ -n "$FE_IMG" ] || fail "imágenes rls-captain-* no encontradas"
+BE_IMG="$(docker images --format '{{.Repository}}:{{.Tag}} {{.Size}}' ghcr.io/srdinotito/rls-legacy-backend | head -1)"
+FE_IMG="$(docker images --format '{{.Repository}}:{{.Tag}} {{.Size}}' ghcr.io/srdinotito/rls-legacy-frontend | head -1)"
+[ -n "$BE_IMG" ] && [ -n "$FE_IMG" ] || fail "imágenes ghcr.io/srdinotito/rls-legacy-* no encontradas"
 BE_MB="$(size_mb "${BE_IMG#* }")"
 FE_MB="$(size_mb "${FE_IMG#* }")"
 say "  $BE_IMG"
 say "  $FE_IMG"
 [ "${BE_MB:-9999}" -le 35 ] && track PASS SIZES "backend ${BE_MB}MB ≤ 35MB" \
                             || track FAIL SIZES "backend ${BE_MB}MB > 35MB"
-[ "${FE_MB:-9999}" -le 40 ] && track PASS SIZES "frontend ${FE_MB}MB ≤ 40MB" \
-                            || track FAIL SIZES "frontend ${FE_MB}MB > 40MB"
+[ "${FE_MB:-9999}" -le 250 ] && track PASS SIZES "frontend ${FE_MB}MB ≤ 250MB (Bun runtime)" \
+                             || track FAIL SIZES "frontend ${FE_MB}MB > 250MB (Bun runtime)"
 
-# --- paso 3: docker stats (límites runtime DEC-006: 128M / 64M) -----------------
+# --- paso 3: docker stats (límites runtime: 128M backend / 128M frontend) ------
 say "paso 3: docker stats --no-stream"
 STATS="$(docker stats --no-stream --format '{{.Name}}|{{.MemUsage}}|{{.CPUPerc}}' \
          "$B_CONT" "$F_CONT" 2>/dev/null || :)"
@@ -145,8 +147,8 @@ BE_MEM="$(size_mb "${BE_MEM:-0MiB}")"
 FE_MEM="$(size_mb "${FE_MEM:-0MiB}")"
 [ "${BE_MEM:-99999}" -le 128 ] && track PASS STATS "backend ${BE_MEM}MiB ≤ 128M" \
                               || track FAIL STATS "backend ${BE_MEM}MiB > 128M"
-[ "${FE_MEM:-99999}" -le 64 ] && track PASS STATS "frontend ${FE_MEM}MiB ≤ 64M" \
-                             || track FAIL STATS "frontend ${FE_MEM}MiB > 64M"
+[ "${FE_MEM:-99999}" -le 128 ] && track PASS STATS "frontend ${FE_MEM}MiB ≤ 128M" \
+                               || track FAIL STATS "frontend ${FE_MEM}MiB > 128M"
 
 # --- paso 4 (AC-001): bootstrap admin + login ----------------------------------
 say "paso 4: AC-001 bootstrap + login del primer usuario"
@@ -302,25 +304,25 @@ VU_CODE="$(runc -sS -b /c/cookies2 -w '%{http_code}' -o /dev/null \
 [ "$VU_CODE" = "403" ] && track PASS AC-005 "viewer NO puede GET /users (403)" \
                       || track FAIL AC-005 "viewer GET /users → HTTP $VU_CODE"
 
-# --- paso 10 (AC-006): tema Treasure Planet + SSE vía el proxy nginx -------------
-say "paso 10: AC-006 frontend prerenderizado + SSE (headers) vía nginx"
-FE="$(runc -sS -o /c/index.html -w '%{http_code}|%{content_type}' http://frontend:80/ || :)"
-[ "$FE" = "200|text/html" ] && track PASS AC-006 "GET / → 200 text/html (SPA prerenderizada)" \
+# --- paso 10 (AC-006): SPA y SSE a través del servidor Bun ----------------------
+say "paso 10: AC-006 frontend estático + proxy SSE vía Bun"
+FE="$(runc -sS -o /c/index.html -w '%{http_code}|%{content_type}' http://frontend:3008/ || :)"
+[ "${FE#200|text/html}" != "$FE" ] && track PASS AC-006 "GET / → 200 text/html (SPA prerenderizada)" \
                             || track FAIL AC-006 "GET / → $FE"
-docker run --rm rls-captain-frontend sh -c 'grep -rq "070708" /usr/share/nginx/html' \
+docker exec "$F_CONT" sh -c 'grep -R -q "070708" /app/build' \
   && track PASS AC-006 "assets contienen fondo #070708 (paleta Treasure Planet)" \
   || track FAIL AC-006 "no se encontró #070708 en los assets servidos"
 SSE="$(runc -sS --max-time 5 -N -b /c/cookies -D - -o /dev/null \
-      http://frontend:80/api/v1/stream 2>/dev/null || :)"
+      http://frontend:3008/api/v1/stream 2>/dev/null || :)"
 say "  headers SSE (cookie con domain=frontend, jar dedicado):"
 runc -sS -X POST -H 'Content-Type: application/json' \
     --data "{\"username\":\"$ADMIN_USER\",\"password\":\"$ADMIN_PASS\"}" \
-    -c /c/cookiesFE -o /dev/null http://frontend:80/api/v1/auth/login || :
+    -c /c/cookiesFE -o /dev/null http://frontend:3008/api/v1/auth/login || :
 SSE="$(runc -sS --max-time 5 -N -b /c/cookiesFE -D - -o /dev/null \
-      http://frontend:80/api/v1/stream 2>/dev/null || :)"
+      http://frontend:3008/api/v1/stream 2>/dev/null || :)"
 printf '%s\n' "$SSE" | head -8 | sed 's/^/    /'
 echo "$SSE" | grep -i '^content-type: text/event-stream' >/dev/null 2>&1 \
-  && track PASS AC-006 "SSE /api/v1/stream vía nginx → text/event-stream" \
+  && track PASS AC-006 "SSE /api/v1/stream vía Bun → text/event-stream" \
   || track FAIL AC-006 "SSE headers: $(printf '%s' "$SSE" | head -3 | tr '\n' ' ')"
 
 # --- resumen -------------------------------------------------------------------

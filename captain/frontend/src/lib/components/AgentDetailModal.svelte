@@ -4,7 +4,7 @@
 	import {
 		agentHistory,
 		putThresholds,
-		listAlerts,
+		listAgentAlerts,
 		resolveAlert,
 		putAgentMonitoringIgnored
 	} from '#lib/api/client.js';
@@ -19,6 +19,7 @@
 	import { Label } from '#lib/components/ui/label/index.js';
 	import { Tabs } from '#lib/components/ui/tabs/index.js';
 	import { Badge } from '#lib/components/ui/badge/index.js';
+	import PaginationControls from '#lib/components/PaginationControls.svelte';
 	import { fmtAgo, fmtTs, alertTypeLabel, fmtAlertMessage, fmtAlertReading } from '#lib/format.js';
 	import { auth } from '#lib/stores/auth.svelte.js';
 	import NotificationPolicyControls from '#lib/components/NotificationPolicyControls.svelte';
@@ -36,7 +37,7 @@
 	let { open = $bindable(false), agent }: { open?: boolean; agent: Agent } = $props();
 
 	type TF = '1h' | '6h' | '24h';
-	type DetailPanel = 'overview' | 'history' | 'alerts';
+	type DetailPanel = 'overview' | 'history';
 	/** Ventanas referenciales (mismo stepper que el page detail). */
 	const WINDOW: Record<TF, { span: number; step: number }> = {
 		'1h': { span: 3600, step: 60 },
@@ -50,8 +51,7 @@
 	];
 	const PANEL_OPTIONS: { value: DetailPanel; label: string }[] = [
 		{ value: 'overview', label: 'Resumen y ajustes' },
-		{ value: 'history', label: 'Historial' },
-		{ value: 'alerts', label: 'Alertas' }
+		{ value: 'history', label: 'Historial y eventos' }
 	];
 
 	const offline = $derived(agent.status !== 'online');
@@ -62,6 +62,8 @@
 	let tf = $state<TF>('1h');
 	let hist = $state<HistoryPoint[]>([]);
 	let alerts = $state<NormalizedAlert[]>([]);
+	const alertPageSize = 8;
+	let alertPage = $state(0);
 
 	let loadedForId = $state(-1);
 	let thrCpu = $state('90');
@@ -82,12 +84,11 @@
 		}
 	}
 
-	/** La API de alerts no filtra por agent → scope=all + filtro client-side. */
+	/** El backend devuelve el registro asociado exclusivamente a este contenedor. */
 	async function fetchAlerts(id: number): Promise<void> {
 		try {
-			const res = await listAlerts('all');
-			// normalizeAlerts: rows null-safe (value/agent_name nullable, shape v2)
-			alerts = normalizeAlerts(res.data).filter((a) => a.agent_id === id);
+			const res = await listAgentAlerts(id, 'all');
+			alerts = normalizeAlerts(res.data);
 		} catch {
 			// tolerado
 		}
@@ -117,6 +118,7 @@
 		thrCpu = String(agent.thresholds_cpu ?? 90);
 		thrRam = String(agent.thresholds_ram ?? 95);
 		panel = 'overview';
+		alertPage = 0;
 		ignoreConfirmOpen = false;
 	});
 
@@ -203,6 +205,7 @@
 	const rxData = $derived(hist.map((p) => p.rx_mb));
 	const txData = $derived(hist.map((p) => p.tx_mb));
 	const openAlerts = $derived(alerts.filter((a) => !a.resolved_at));
+	const pageAlerts = $derived(alerts.slice(alertPage * alertPageSize, (alertPage + 1) * alertPageSize));
 </script>
 
 <Dialog
@@ -271,9 +274,9 @@
 							</section>
 						{/if}
 					</div>
-				{:else if panel === 'history'}
+				{:else}
 					<section class="agent-panel-card agent-history-panel">
-						<header class="agent-panel-heading"><div><p class="agent-panel-eyebrow">Uso del contenedor</p><h3>Historial de métricas</h3></div><Tabs options={TF_OPTIONS} bind:value={tf} /></header>
+						<header class="agent-panel-heading"><div><p class="agent-panel-eyebrow">Actividad del contenedor</p><h3>Historial y eventos</h3></div><Tabs options={TF_OPTIONS} bind:value={tf} /></header>
 						{#if hist.length > 0}
 							<div class="agent-history-charts">
 								<div class="agent-chart-card"><p class="agent-panel-eyebrow">CPU y memoria</p><UplotChart times={gx} height={220} series={[{ label: 'CPU %', values: cpuData, color: 'hsl(42 85% 52%)', unit: '%', digits: 1, fillAlpha: 0.08 }, { label: 'RAM usada', values: ramUsed, color: 'hsl(187 80% 45%)', unit: 'MB', digits: 1, fillAlpha: 0.08 }, { label: 'RAM límite', values: ramLimit, color: 'hsl(240 8% 56%)', dash: [6, 4], unit: 'MB', digits: 0 }]} /></div>
@@ -282,22 +285,22 @@
 						{:else}
 							<div class="agent-history-empty"><p class="font-medium">Todavía no hay muestras en este período</p><p class="mt-1 text-sm text-muted-foreground">Prueba con una ventana más amplia o vuelve cuando haya nuevos datos.</p></div>
 						{/if}
-					</section>
-				{:else}
-					<section class="agent-panel-card agent-alerts-panel">
-						<header class="agent-panel-heading"><div><p class="agent-panel-eyebrow">Eventos del contenedor</p><h3>Alertas</h3></div><Badge variant={openAlerts.length ? 'destructive' : 'outline'}>{openAlerts.length} abiertas · {alerts.length} total</Badge></header>
+						<div class="agent-alerts-panel">
+						<header class="agent-panel-heading"><div><p class="agent-panel-eyebrow">Registro de eventos</p><h3>Alertas del contenedor</h3></div><Badge variant={openAlerts.length ? 'destructive' : 'outline'}>{openAlerts.length} abiertas · {alerts.length} total</Badge></header>
 						{#if alerts.length > 0}
 							<div class="agent-alert-list">
-								{#each alerts as alert (alert.id)}
+								{#each pageAlerts as alert (alert.id)}
 									<article class="agent-alert-row" class:agent-alert-row--resolved={!!alert.resolved_at}>
 										<div class="min-w-0"><div class="flex flex-wrap items-center gap-2"><Badge variant={alert.resolved_at ? 'outline' : 'destructive'}>{alertTypeLabel(alert.type)}</Badge><span class="text-sm font-medium">{fmtAlertMessage(alert.message)}</span></div><p class="mt-2 text-xs text-muted-foreground">{fmtAlertReading(alert.type, alert.value)} · {fmtTs(alert.fired_at)}{alert.resolved_at ? ` · marcada resuelta ${fmtTs(alert.resolved_at)}` : ' · abierta'}</p></div>
 										{#if !alert.resolved_at}<Button variant="ghost" size="sm" class="shrink-0" title="Marca este evento como resuelto; las reglas siguen activas" onclick={() => void resolveAlertRow(alert.id)}>Marcar resuelta</Button>{/if}
 									</article>
 								{/each}
 							</div>
+							<PaginationControls bind:page={alertPage} pageSize={alertPageSize} total={alerts.length} itemLabel="eventos" />
 						{:else}
 							<div class="agent-history-empty"><p class="font-medium">Sin alertas registradas</p><p class="mt-1 text-sm text-muted-foreground">Las alertas que se generen aparecerán aquí.</p></div>
 						{/if}
+						</div>
 					</section>
 				{/if}
 			</div>

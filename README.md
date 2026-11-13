@@ -3,26 +3,24 @@
 </p>
 
 <h1 align="center">RLS Legacy</h1>
-<p align="center"><strong>Un panel para consultar el estado de tus VPS y contenedores Docker desde un solo lugar.</strong></p>
+<p align="center"><strong>Un dashboard para ver los contenedores Docker de tus VPS desde un solo lugar.</strong></p>
 <p align="center"><a href="./LICENSE"><img alt="Licencia MIT" src="https://img.shields.io/badge/license-MIT-gold.svg"></a></p>
 
-RLS Legacy tiene dos partes: **Captain**, el dashboard central que instalas en tu VPS de control, y **RLS Stowaway**, un servicio liviano que instalas en cada VPS que quieras monitorear. Stowaway consulta Docker en su propio servidor y envía los datos al dashboard.
+Captain es el dashboard que instalas en tu servidor de control. En cada VPS externa que quieras monitorear instalas RLS Stowaway, un servicio `systemd` que consulta el Docker Engine de esa VPS y envía sus datos a Captain.
 
-No necesitas agregar un agente a cada contenedor ni modificar los archivos Compose de tus aplicaciones.
+No hace falta instalar un agente dentro de cada contenedor, modificar los Compose de tus aplicaciones ni desplegar Prometheus en cada VPS.
 
-## Qué puedes hacer
+## Qué necesitas
 
-- Ver desde un solo panel las VPS conectadas y sus contenedores.
-- Consultar el estado, las métricas disponibles, el historial y las alertas.
-- Clasificar contenedores con etiquetas y filtrar el tablero.
-- Ignorar un contenedor sin eliminarlo: seguirá visible como ignorado y podrás volver a incluirlo cuando quieras.
-- Recibir avisos de alertas en Discord o Telegram.
+- Un servidor Linux para Captain con Docker Engine y Docker Compose v2.
+- Un dominio con HTTPS si vas a conectar VPS externas.
+- Cada VPS monitoreada debe usar Linux, `systemd` y Docker Engine. Se admiten `amd64` y `arm64`.
 
-## Instalación
+## Instalar Captain con Docker Compose
 
-### 1. Inicia el dashboard
+### 1. Preparar la configuración
 
-En la VPS que usarás como centro de control, instala Docker y Docker Compose. Clona el repositorio y ejecuta Captain:
+En el servidor que será tu centro de control, instala Docker, clona el repositorio y crea el archivo de configuración:
 
 ```bash
 git clone https://github.com/SrDinoTito/RLS-Legacy.git
@@ -30,60 +28,123 @@ cd RLS-Legacy/captain
 cp compose.env.example .env
 ```
 
-Configura `RLS_JWT_SECRET` en `captain/.env` con una clave aleatoria. Por ejemplo:
+Genera una clave para las sesiones:
 
 ```bash
 openssl rand -hex 32
 ```
 
-Luego inicia el dashboard:
+Edita `.env` (`nano .env`) y completa como mínimo:
 
-```bash
-docker compose up -d --build
+```env
+RLS_JWT_SECRET=PEGA_AQUI_LA_CLAVE_GENERADA
+RLS_PUBLIC_URL=https://rls.tudominio.com
 ```
 
-Abre `http://IP-DE-TU-VPS:3008` o el dominio que hayas configurado. En la primera visita, crea la cuenta administradora.
+`RLS_PUBLIC_URL` debe ser la dirección del dashboard que puedan alcanzar las VPS. Para una prueba en la misma computadora puedes usar `http://localhost:3008`; **no uses localhost para VPS externas**.
 
-### 2. Conecta una VPS
+### 2. Iniciar el dashboard
 
-Repite estos pasos por cada VPS externa que quieras monitorear:
+```bash
+docker compose pull
+docker compose up -d
+docker compose ps
+```
 
-1. En el dashboard, abre **Tokens** y crea un token con un nombre que te ayude a reconocer esa VPS.
-2. Copia desde el propio dashboard el comando de instalación que aparece para ese token. El token se crea y administra desde la interfaz web; no hace falta escribirlo a mano en un Compose.
-3. Ejecuta el comando en una terminal del **host Linux** de esa VPS. La instalación configura RLS Stowaway como servicio del sistema y lo inicia.
+Abre `https://rls.tudominio.com` o, si estás probando localmente, `http://localhost:3008`. No hay credenciales predeterminadas: en el primer acceso, crea la cuenta administradora.
 
-Instálalo en el servidor que ejecuta Docker, no dentro de las aplicaciones. Un token corresponde a una VPS y permite que aparezcan en el dashboard los contenedores en ejecución de ese servidor.
+Captain escucha en el puerto `3008`. La base SQLite queda en `captain/data/rls.db` en instalaciones Docker Compose normales y sobrevive a las actualizaciones de los contenedores.
 
-El acceso de Stowaway al socket Docker del host tiene privilegios equivalentes a root. Instálalo solo en VPS que administras y mantén el dashboard detrás de HTTPS si es accesible desde Internet.
+### Instalación en Dokploy
 
-## Uso del dashboard
+Usa el archivo [`captain/compose.dokploy.yaml`](captain/compose.dokploy.yaml). En las variables del servicio configura `RLS_JWT_SECRET` y `RLS_PUBLIC_URL` con tu clave y dominio HTTPS. Agrega el dominio al servicio **frontend** con puerto interno **3008**; no publiques el backend en Internet.
 
-- **Tablero:** consulta el estado de los contenedores y abre un contenedor para ver sus datos, configuración e historial.
-- **VPS:** entra a una VPS para ver sus contenedores, agregar etiquetas o ajustar los avisos de ese servidor.
-- **Ignorar un contenedor:** abre su detalle y elige **Ignorar monitoreo**. Seguirá apareciendo en la lista con la marca **Ignorado**, pero dejará de generar nuevas métricas y alertas. Usa **Volver a monitorear** para reactivarlo.
-- **Tokens:** crea, copia o revoca el token de cada VPS desde la interfaz web.
-- **Notificaciones:** configura Discord o Telegram en el archivo `.env` del dashboard. Las preferencias del dashboard permiten silenciar avisos generales o de consumo por VPS o contenedor.
+El Compose de Dokploy usa el tag `latest` y solicita la imagen al hacer deploy. Un release nuevo no reinicia por sí solo un contenedor ya activo: después de publicar una versión, vuelve a desplegar el proyecto para actualizarlo.
 
-Para administrar el servicio en una VPS:
+## Conectar una VPS
+
+Repite estos pasos en cada VPS externa:
+
+1. En Captain, abre **Tokens** y crea un token para esa VPS.
+2. Copia el comando de instalación que muestra el dashboard.
+3. Ejecútalo en una terminal del **host Linux** que ejecuta Docker, no dentro de una aplicación.
+4. El instalador pide el token de forma oculta, instala `rls-stowaway` como servicio `systemd` y lo inicia.
+
+El token se crea y administra desde el dashboard. Usa uno por VPS. Stowaway consulta el Engine local y reporta los contenedores que encuentra; no requiere cambios en sus archivos Compose.
+
+**Seguridad:** el acceso al socket Docker del host equivale a acceso root. Instala Stowaway solo en servidores que administras y protege Captain con HTTPS cuando sea accesible desde Internet.
+
+## Uso
+
+- **Tablero:** revisa el estado y las métricas reportadas por las VPS.
+- **VPS:** consulta los contenedores de un servidor y sus preferencias de avisos.
+- **Etiquetas:** clasifica contenedores y filtra el tablero por etiqueta.
+- **Ignorar:** un contenedor ignorado sigue visible, pero deja de generar métricas y alertas nuevas. Puedes volver a monitorearlo desde su fila.
+- **Historial y alertas:** abre un contenedor para revisar sus eventos, alertas y configuración.
+- **Notificaciones:** configura Discord o Telegram con las variables opcionales de `.env`; los avisos de consumo se pueden habilitar por separado.
+
+Para revisar o controlar Stowaway en una VPS:
 
 ```bash
 sudo systemctl status rls-stowaway
+sudo journalctl -u rls-stowaway -f
 sudo systemctl stop rls-stowaway
 sudo systemctl enable --now rls-stowaway
 sudo systemctl disable --now rls-stowaway
 ```
 
-## Requisitos
+## Actualizar o volver a una versión anterior
 
-- **Captain:** un servidor con Docker Engine y Docker Compose.
-- **Stowaway:** VPS Linux con systemd y Docker Engine; arquitectura `amd64` o `arm64`.
-- Las VPS externas deben poder conectarse por HTTPS al dominio del dashboard.
+Para instalar el release más reciente publicado:
+
+```bash
+./update.sh
+```
+
+El Compose usa `latest` por defecto; el script descarga las imágenes y actualiza los servicios sin borrar la base de datos ni `.env`. Para fijar o recuperar una versión concreta, cambia `latest` por el mismo tag en las dos referencias `image:` (por ejemplo, `v1.0.1`) y ejecuta `docker compose pull && docker compose up -d`.
+
+## Notificaciones
+
+Los avisos externos son opcionales. Para usar Discord completa `RLS_NOTIF_DISCORD_WEBHOOK_URL` en `.env`; para Telegram configura `RLS_NOTIF_TELEGRAM_BOT_TOKEN` y `RLS_NOTIF_TELEGRAM_CHAT_ID`. Después aplica los cambios:
+
+```bash
+docker compose up -d
+```
+
+Las alertas siguen visibles en el panel aunque los avisos externos estén silenciados.
+
+## Ayuda y diagnóstico
+
+Si el dashboard no muestra una VPS, comprueba primero el servicio y los logs del host remoto; después revisa los logs de Captain:
+
+```bash
+# En la VPS monitoreada
+sudo systemctl status rls-stowaway
+sudo journalctl -u rls-stowaway -n 100 --no-pager
+
+# En el servidor de Captain
+docker compose ps
+docker compose logs --tail=100 backend frontend
+```
+
+Confirma también que `RLS_PUBLIC_URL` sea correcto y accesible desde la VPS. Para informar un problema, abre un issue e incluye los pasos para reproducirlo y los logs relevantes, quitando antes tokens, webhooks y otros datos privados.
 
 ## Contribuir
 
-Si encuentras un problema o tienes una mejora, abre un issue o envía un pull request. Para cambios en la aplicación, valida el backend con `go test ./...` y el frontend con `bun test` y `bun run build` desde sus respectivas carpetas.
+Los cambios son bienvenidos. Antes de enviar un pull request, ejecuta las comprobaciones correspondientes:
 
-No incluyas tokens, webhooks, archivos `.env`, bases de datos ni copias de seguridad en tus cambios.
+```bash
+# Backend
+cd captain/backend
+go test ./...
+
+# Frontend (Bun)
+cd ../frontend
+bun run check
+bun run build
+```
+
+No incluyas archivos `.env`, tokens, webhooks, bases SQLite ni backups.
 
 ## Licencia
 

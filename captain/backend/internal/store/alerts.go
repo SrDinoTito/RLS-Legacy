@@ -90,6 +90,36 @@ func (s *Store) ListAlertsAll(ctx context.Context, onlyOpen bool) ([]AlertWithAg
 	return out, rows.Err()
 }
 
+// ListAlertsByAgent returns the permanent alert record for one container,
+// newest first. Resolved alerts remain available when onlyOpen is false.
+func (s *Store) ListAlertsByAgent(ctx context.Context, agentID int64, onlyOpen bool) ([]AlertWithAgent, error) {
+	q := `
+		SELECT al.id, al.agent_id, al.type, al.value, al.message, al.fired_at, al.resolved_at,
+		       a.name
+		FROM alerts al
+		LEFT JOIN agents a ON a.id = al.agent_id
+		WHERE al.agent_id = ?`
+	if onlyOpen {
+		q += ` AND al.resolved_at IS NULL`
+	}
+	q += ` ORDER BY al.id DESC`
+	rows, err := s.db.QueryContext(ctx, q, agentID)
+	if err != nil {
+		return nil, fmt.Errorf("list alerts for agent %d: %w", agentID, err)
+	}
+	defer rows.Close()
+	var out []AlertWithAgent
+	for rows.Next() {
+		var alert AlertWithAgent
+		if err := rows.Scan(&alert.ID, &alert.AgentID, &alert.Type, &alert.Value, &alert.Message,
+			&alert.FiredAt, &alert.ResolvedAt, &alert.AgentName); err != nil {
+			return nil, fmt.Errorf("scan alert for agent %d: %w", agentID, err)
+		}
+		out = append(out, alert)
+	}
+	return out, rows.Err()
+}
+
 // AlertByID fetches a single alert. ErrNotFound when absent.
 func (s *Store) AlertByID(ctx context.Context, id int64) (*Alert, error) {
 	var a Alert

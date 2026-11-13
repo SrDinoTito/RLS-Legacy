@@ -31,7 +31,7 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	h := w.Header()
 	h.Set("Content-Type", "text/event-stream; charset=utf-8")
 	h.Set("Cache-Control", "no-cache")
-	h.Set("X-Accel-Buffering", "no") // nginx: do not buffer the stream
+	h.Set("X-Accel-Buffering", "no") // Reverse proxies should not buffer the SSE stream.
 
 	rc := http.NewResponseController(w)
 	// Write deadline keeps a hung client from holding a connection forever;

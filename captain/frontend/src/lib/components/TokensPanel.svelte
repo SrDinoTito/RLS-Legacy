@@ -1,5 +1,7 @@
 <script lang="ts">
 	import Anchor from '@lucide/svelte/icons/anchor';
+	import ChevronLeft from '@lucide/svelte/icons/chevron-left';
+	import ChevronRight from '@lucide/svelte/icons/chevron-right';
 	import Copy from '@lucide/svelte/icons/copy';
 	import { toast } from 'svelte-sonner';
 	import {
@@ -39,9 +41,19 @@
 	/** Creador de tokens como modal ("más al alcance"): mismo componente. */
 	let createTokenOpen = $state(false);
 	let showRevoked = $state(false);
+	const pageSize = 4;
+	let tokenPage = $state(0);
 	const activeCount = $derived(tokens.filter((token) => token.status === 'active').length);
 	const revokedCount = $derived(tokens.length - activeCount);
 	const visibleTokens = $derived(showRevoked ? tokens : tokens.filter((token) => token.status === 'active'));
+	const pageCount = $derived(Math.max(1, Math.ceil(visibleTokens.length / pageSize)));
+	const pageTokens = $derived(visibleTokens.slice(tokenPage * pageSize, (tokenPage + 1) * pageSize));
+	const pageStart = $derived(visibleTokens.length === 0 ? 0 : tokenPage * pageSize + 1);
+	const pageEnd = $derived(Math.min((tokenPage + 1) * pageSize, visibleTokens.length));
+
+	$effect(() => {
+		if (tokenPage >= pageCount) tokenPage = pageCount - 1;
+	});
 
 	// edición inline de tags: una fila a la vez (chips reusados vía TagInput)
 	let editingTagId = $state<number | null>(null);
@@ -192,14 +204,22 @@
 			<p class="text-xs text-muted-foreground">
 				<span class="font-medium text-foreground">{activeCount} activos</span>
 				<span class="mx-1.5 text-border">·</span>
-				{revokedCount} dados de baja ocultos
+				{revokedCount} dados de baja {showRevoked ? 'incluidos' : 'ocultos'}
 			</p>
-			<Button variant="ghost" size="sm" onclick={() => (showRevoked = !showRevoked)}>
+			<Button variant="ghost" size="sm" onclick={() => { showRevoked = !showRevoked; tokenPage = 0; }}>
 				{showRevoked ? 'Mostrar solo activos' : `Incluir dados de baja (${revokedCount})`}
 			</Button>
 		</div>
-		<div class="overflow-x-auto rounded-lg border border-border">
-		<Table class="min-w-[660px]">
+		<div class="overflow-hidden rounded-lg border border-border">
+		<Table class="vps-token-table table-fixed w-full min-w-0">
+			<colgroup>
+				<col style="width: 17%" />
+				<col style="width: 17%" />
+				<col style="width: 18%" />
+				<col style="width: 13%" />
+				<col style="width: 17%" />
+				<col style="width: 18%" />
+			</colgroup>
 			<thead>
 				<TableRow class="bg-muted/40">
 					<TableHead>Nombre</TableHead>
@@ -211,40 +231,43 @@
 				</TableRow>
 			</thead>
 			<tbody>
-				{#each visibleTokens as t (t.id)}
+				{#each pageTokens as t (t.id)}
 					<TableRow>
-						<TableCell class="min-w-[6rem]" title={`Creado ${fmtTs(t.created_at)}`}>
-							<div class="flex flex-wrap items-center gap-x-2 gap-y-1">
-								<span class="font-medium">{t.name}</span>
-								{#if t.vps_scoped}
-									<span
-										class="whitespace-nowrap rounded-full border border-primary/40 bg-primary/10 px-2 py-0.5 text-center text-[10px] uppercase tracking-wide text-primary"
-										title="Credencial única de la VPS; Stowaway reporta los contenedores en ejecución"
-									>
-										VPS
-									</span>
-								{:else}
-									<span class="whitespace-nowrap rounded-full border border-border px-2 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground" title="Credencial anterior conservada para compatibilidad; crear una nueva por VPS">Migración</span>
-								{/if}
+						<TableCell class="min-w-0" title={`${t.name} · creado ${fmtTs(t.created_at)}`}>
+							<div class="grid min-w-0 gap-1">
+								<div class="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+									<span class="max-w-full truncate font-semibold" title={t.name}>{t.name}</span>
+									{#if t.vps_scoped}
+										<span
+											class="whitespace-nowrap rounded-full border border-primary/40 bg-primary/10 px-2 py-0.5 text-center text-[10px] uppercase tracking-wide text-primary"
+											title="Credencial única de la VPS; Stowaway reporta los contenedores en ejecución"
+										>
+											VPS
+										</span>
+									{:else}
+										<span class="whitespace-nowrap rounded-full border border-border px-2 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground" title="Credencial anterior conservada para compatibilidad; crear una nueva por VPS">Migración</span>
+									{/if}
+								</div>
+								<span class="token-created">Creado {fmtTs(t.created_at)}</span>
 							</div>
 						</TableCell>
 						<!-- Credencial oculta por defecto; tocarla copia el valor íntegro. -->
-						<TableCell>
+						<TableCell class="min-w-0">
 							<button
 								type="button"
-								class="token-copy-trigger group"
+								class="token-copy-trigger group w-full min-w-0"
 								aria-label={`Copiar token de ${t.name}`}
 								title={`Tocar para copiar el token de ${t.name}`}
 								onclick={() => void copyText(t.token, `${t.name}: token copiado`)}
 							>
-								<code class="truncate font-mono text-xs">{tokenPreview(t.token)}</code>
+								<code class="min-w-0 truncate font-mono text-xs">{tokenPreview(t.token)}</code>
 								<Copy size={13} class="token-copy-icon shrink-0" aria-hidden="true" />
 							</button>
 						</TableCell>
 						<!-- tags: chips clicables → edición inline (PUT /tags), chips reusados vía TagInput -->
-						<TableCell>
+						<TableCell class="min-w-0">
 							{#if editingTagId === t.id}
-								<div class="grid w-full min-w-[200px] gap-2">
+								<div class="grid w-full min-w-0 gap-2">
 									<TagInput
 										bind:tags={editingTagDraft}
 										bind:input={editingTagInput}
@@ -295,15 +318,16 @@
 							{/if}
 						</TableCell>
 						<TableCell class="whitespace-nowrap">
-							<Badge variant={t.status === 'active' ? 'default' : 'outline'} class="whitespace-nowrap">
+							<Badge variant={t.status === 'active' ? 'default' : 'outline'} class="token-status-badge whitespace-nowrap">
+								<span class="token-status-indicator {t.status === 'active' ? 'is-active' : ''}" aria-hidden="true"></span>
 								{t.status === 'active' ? 'activo' : 'dado de baja'}
 							</Badge>
 						</TableCell>
-						<TableCell>
+						<TableCell class="min-w-0">
 							{#if t.vps_scoped}
-								<div class="grid gap-1 text-muted-foreground" title="Docker Engine ID enlazado al primer reporte">
-									<span>{t.adopted_count} contenedor{t.adopted_count === 1 ? '' : 'es'}</span>
-									<span class="max-w-[140px] truncate text-[10px]">{t.vps_id ? `Engine ${t.vps_id}` : 'Esperando a Stowaway'}</span>
+								<div class="grid min-w-0 gap-1 text-muted-foreground" title="Docker Engine ID enlazado al primer reporte">
+									<span class="truncate">{t.adopted_count} contenedor{t.adopted_count === 1 ? '' : 'es'}</span>
+									<span class="max-w-full truncate text-[10px]">{t.vps_id ? `Engine ${t.vps_id}` : 'Esperando a Stowaway'}</span>
 								</div>
 							{:else if t.enrollment}
 								<div class="grid gap-1 text-muted-foreground" title="Credencial previa sin asociación exclusiva a una VPS">
@@ -318,8 +342,8 @@
 							{:else}—{/if}
 							{/if}
 						</TableCell>
-						<TableCell class="text-right">
-							<div class="flex justify-end gap-1 whitespace-nowrap">
+						<TableCell class="min-w-0 text-right">
+							<div class="vps-token-actions flex flex-wrap justify-end gap-1">
 								<Button variant="action" size="sm" onclick={() => { instructionsToken = t; instructionsOpen = true; }}>
 									{t.vps_scoped ? 'Instalar Stowaway' : 'Migración'}
 								</Button>
@@ -344,6 +368,23 @@
 			</tbody>
 		</Table>
 		</div>
+		{#if pageCount > 1}
+			<nav class="vps-token-pagination" aria-label="Páginas de tokens">
+				<p class="vps-token-pagination-summary">
+					<span class="font-medium text-foreground">Tokens</span>
+					<span>{pageStart}–{pageEnd} de {visibleTokens.length}</span>
+				</p>
+				<div class="vps-token-pagination-controls">
+					<Button variant="action" size="sm" aria-label="Página anterior" disabled={tokenPage === 0} onclick={() => (tokenPage -= 1)}>
+						<ChevronLeft size={14} aria-hidden="true" />Anterior
+					</Button>
+					<span class="vps-token-page-position">Página <strong>{tokenPage + 1}</strong> de {pageCount}</span>
+					<Button variant="action" size="sm" aria-label="Página siguiente" disabled={tokenPage >= pageCount - 1} onclick={() => (tokenPage += 1)}>
+						Siguiente<ChevronRight size={14} aria-hidden="true" />
+					</Button>
+				</div>
+			</nav>
+		{/if}
 	</CardContent>
 </Card>
 

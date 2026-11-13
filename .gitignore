@@ -13,6 +13,7 @@ captain/backend/data/
 # DB runtime (bind mount captain/data) + snapshots de backup.sh (REQ-060)
 captain/data/
 captain/backups/
+captain/smoke/
 
 # --- Node / Bun / SvelteKit (frontend) ---
 node_modules/

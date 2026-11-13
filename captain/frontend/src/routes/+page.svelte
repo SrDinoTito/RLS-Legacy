@@ -2,7 +2,8 @@
 	import Anchor from '@lucide/svelte/icons/anchor';
 	import ArrowDown from '@lucide/svelte/icons/arrow-down';
 	import ArrowUp from '@lucide/svelte/icons/arrow-up';
-	import Eye from '@lucide/svelte/icons/eye';
+	import ChevronLeft from '@lucide/svelte/icons/chevron-left';
+	import ChevronRight from '@lucide/svelte/icons/chevron-right';
 	import RefreshCw from '@lucide/svelte/icons/refresh-cw';
 	import { toast } from 'svelte-sonner';
 	import { putAgentMonitoringIgnored } from '#lib/api/client.js';
@@ -39,15 +40,15 @@
 	 * nav + accesos admin (iconos Lucide + modales, que ahora viven en
 	 * AppShell) + grados de sesión. Aquí queda solo la BANDA "toolbar" de la
 	 * vista: título muted + badge SSE + toggle lista/tarjetas + filtro
-	 * Todos/Offline + refrescar, y debajo los chips de tags. View switch
+	 * Todos/Offline/Ignorados + refrescar, y debajo los chips de tags. View switch
 	 * persistido en 'rls.view' (default "lista"), filtro de tags persistido
 	 * en 'rls.tag.filter'. Click en fila → modal de detalle.
 	 */
 
 	type ViewMode = 'lista' | 'cards';
 
-	/** Filtro de estado (REQ-022): "Todos / Solo offline". */
-	let filter = $state<'todo' | 'offline'>('todo');
+	/** Filtro de flota: operativos, offline o inventario ignorado. */
+	let filter = $state<'todo' | 'offline' | 'ignored'>('todo');
 
 	/** View switch (refactor): 'rls.view' con default "lista". */
 	let view = $state<ViewMode>(readView());
@@ -55,6 +56,7 @@
 	let detailOpen = $state(false);
 	let tokenModalOpen = $state(false);
 	let updatingIgnoredID = $state<number | null>(null);
+	let manualRefreshPending = $state(false);
 
 	function readView(): ViewMode {
 		// ssr=false pero el prerender del shell puede correr fuera de window → guard
@@ -98,17 +100,48 @@
 	/** Tags distintas presentes en la flota (ordenadas) con su contador. */
 	const tagOptions = $derived.by(() => {
 		const counts = new Map<string, number>();
-		for (const a of agents) {
+		for (const a of allAgents) {
 			for (const t of allAgentTags(a)) counts.set(t, (counts.get(t) ?? 0) + 1);
 		}
 		return [...counts.entries()].sort((x, y) => x[0].localeCompare(y[0]));
 	});
 	/** OR-match: un agent pasa si ALGUNO de sus tags está en la selección. */
 	const filtered = $derived.by(() => {
+		if (filter === 'ignored') return [];
 		let list = agents;
 		if (tagFilter.length > 0) list = list.filter((a) => allAgentTags(a).some((t) => tagFilter.includes(t)));
 		if (filter === 'offline') list = list.filter((a) => a.status !== 'online');
 		return list;
+	});
+	/** Ignoradas visibles en Todos, nunca se mezclan con el filtro operativo offline. */
+	const filteredIgnored = $derived.by(() => {
+		if (filter === 'offline') return [];
+		let list = ignoredAgents;
+		if (tagFilter.length > 0) list = list.filter((agent) => allAgentTags(agent).some((tag) => tagFilter.includes(tag)));
+		return list;
+	});
+	const fleetRows = $derived.by(() => [
+		...filtered.map((agent) => ({ agent, ignored: false })),
+		...filteredIgnored.map((agent) => ({ agent, ignored: true }))
+	]);
+	const pageSize = 8;
+	let currentPage = $state(0);
+	const pageCount = $derived(Math.max(1, Math.ceil(fleetRows.length / pageSize)));
+	const pageRows = $derived(fleetRows.slice(currentPage * pageSize, (currentPage + 1) * pageSize));
+	const pageAgents = $derived(pageRows.filter((row) => !row.ignored).map((row) => row.agent));
+	const pageIgnored = $derived(pageRows.filter((row) => row.ignored).map((row) => row.agent));
+	const pageStart = $derived(fleetRows.length === 0 ? 0 : currentPage * pageSize + 1);
+	const pageEnd = $derived(Math.min((currentPage + 1) * pageSize, fleetRows.length));
+	let lastFilterKey = '';
+	$effect(() => {
+		const nextFilterKey = `${filter}|${tagFilter.join(',')}`;
+		if (nextFilterKey !== lastFilterKey) {
+			lastFilterKey = nextFilterKey;
+			currentPage = 0;
+		}
+	});
+	$effect(() => {
+		if (currentPage >= pageCount) currentPage = Math.max(0, pageCount - 1);
 	});
 	const offlineCount = $derived(agents.filter((a) => a.status !== 'online').length);
 	const onlineCount = $derived(agents.length - offlineCount);
@@ -136,8 +169,14 @@
 		return () => clearInterval(t);
 	});
 
-	function onRefresh(): void {
-		void refreshAgents();
+	async function onRefresh(): Promise<void> {
+		if (manualRefreshPending) return;
+		manualRefreshPending = true;
+		try {
+			await refreshAgents();
+		} finally {
+			manualRefreshPending = false;
+		}
 	}
 
 	function onTokenCreated(): void {
@@ -252,14 +291,15 @@
 			<Tabs
 				class="tabular-nums"
 				options={[
-					{ value: 'todo', label: `Todos (${agents.length})` },
-					{ value: 'offline', label: `Solo offline (${offlineCount})` }
+				{ value: 'todo', label: `Todos (${agents.length + ignoredAgents.length})` },
+					{ value: 'offline', label: `Solo offline (${offlineCount})` },
+					{ value: 'ignored', label: `Ignorados (${ignoredAgents.length})` }
 				]}
 				bind:value={filter}
 			/>
-			<Button variant="action" size="sm" onclick={onRefresh} disabled={sse.loading}>
-				<RefreshCw size={14} strokeWidth={1.8} class={sse.loading ? 'animate-spin' : ''} aria-hidden="true" />
-				{sse.loading ? 'Actualizando…' : 'Refrescar'}
+			<Button variant="action" size="sm" onclick={onRefresh} aria-busy={manualRefreshPending}>
+				<RefreshCw size={14} strokeWidth={1.8} class={manualRefreshPending ? 'animate-spin' : ''} aria-hidden="true" />
+				Refrescar
 			</Button>
 		</div>
 	</div>
@@ -290,6 +330,25 @@
 				</button>
 			{/each}
 		</div>
+	{/if}
+
+	{#if pageCount > 1}
+		<nav class="fleet-pagination" aria-label="Paginación de contenedores">
+			<p class="fleet-pagination-summary">
+				Mostrando <strong>{pageStart}–{pageEnd}</strong> de <strong>{fleetRows.length}</strong> contenedores
+			</p>
+			<div class="fleet-pagination-controls">
+				<Button variant="action" size="sm" disabled={currentPage === 0} aria-label="Página anterior" onclick={() => (currentPage -= 1)}>
+					<ChevronLeft size={15} aria-hidden="true" />
+					Anterior
+				</Button>
+				<span class="fleet-pagination-position">Página <strong>{currentPage + 1}</strong> de {pageCount}</span>
+				<Button variant="action" size="sm" disabled={currentPage >= pageCount - 1} aria-label="Página siguiente" onclick={() => (currentPage += 1)}>
+					Siguiente
+					<ChevronRight size={15} aria-hidden="true" />
+				</Button>
+			</div>
+		</nav>
 	{/if}
 
 	{#if agents.length === 0 && ignoredAgents.length === 0}
@@ -364,15 +423,9 @@
 				{/if}
 			</div>
 		</Card>
-	{:else if agents.length === 0}
-		<Card class="mx-auto mt-8 w-full max-w-[520px] p-6 text-center">
-			<h2 class="font-display text-base uppercase tracking-[0.14em]">No hay contenedores incluidos</h2>
-			<p class="mt-2 text-sm text-muted-foreground">{ignoredAgents.length} contenedor(es) están excluidos del monitoreo. Podés volver a incluirlos desde la página de su VPS.</p>
-			<a class="mt-4 inline-flex justify-center text-sm text-primary underline-offset-4 hover:underline" href="/vps">Administrar VPS y contenedores</a>
-		</Card>
 	{:else if view === 'lista'}
 		<!-- LISTA (refactor): tabla por agent; click en fila → modal de detalle -->
-		<Table class="fleet-table min-w-[900px]">
+		<Table class="fleet-table min-w-[1080px]">
 			<thead>
 				<TableRow class="bg-muted/40">
 					<TableHead>Estado</TableHead>
@@ -389,7 +442,7 @@
 				</TableRow>
 			</thead>
 			<tbody>
-				{#each filtered as agent (agent.id)}
+				{#each pageAgents as agent (agent.id)}
 					{@const offline = agent.status !== 'online'}
 					{@const ramPct =
 						agent.metrics?.ram_used_mb != null && agent.metrics.ram_limit_mb != null && agent.metrics.ram_limit_mb > 0
@@ -506,15 +559,109 @@
 						</TableCell>
 					</TableRow>
 				{:else}
-					<TableRow>
-						<TableCell colspan={11}>
-							<p class="py-8 text-center text-sm text-muted-foreground">
-								{#if tagFilter.length > 0}
-									Ningún agent con los tags seleccionados — probá con otros chips.
-								{:else if filter === 'offline'}
-									Ningún agent está offline — buen trópico.
+					{#if pageRows.length === 0}
+						<TableRow>
+							<TableCell colspan={11}>
+								<p class="py-8 text-center text-sm text-muted-foreground">
+									{#if tagFilter.length > 0}
+										Ningún agent con los tags seleccionados — probá con otros chips.
+									{:else if filter === 'offline'}
+										Ningún agent está offline — buen trópico.
+									{:else if filter === 'ignored'}
+										No hay contenedores ignorados.
+									{/if}
+								</p>
+							</TableCell>
+						</TableRow>
+					{/if}
+				{/each}
+				{#each pageIgnored as agent (agent.id)}
+					{@const ramPct =
+						agent.metrics?.ram_used_mb != null && agent.metrics.ram_limit_mb != null && agent.metrics.ram_limit_mb > 0
+							? (agent.metrics.ram_used_mb / agent.metrics.ram_limit_mb) * 100
+							: null}
+					{@const diskFreePct =
+						agent.disk_free_mb != null && agent.disk_total_mb != null && agent.disk_total_mb > 0
+							? (agent.disk_free_mb / agent.disk_total_mb) * 100
+							: null}
+					<TableRow
+						role="button"
+						tabindex={0}
+						class="ignored-fleet-row cursor-pointer text-muted-foreground"
+						onclick={() => openDetails(agent)}
+						onkeydown={(event) => {
+							if (event.key === 'Enter' || event.key === ' ') {
+								event.preventDefault();
+								openDetails(agent);
+							}
+						}}
+					>
+						<TableCell>
+							<span class="flex items-center gap-2 whitespace-nowrap">
+								<span class="inline-block h-2 w-2 shrink-0 rounded-full bg-muted-foreground/60" aria-hidden="true"></span>
+								<span class="text-[11px] tracking-wider">IGNORADO</span>
+							</span>
+						</TableCell>
+						<TableCell class="max-w-[220px]">
+							<p class="truncate font-medium">{agent.name}</p>
+							<p class="truncate text-[12px] text-muted-foreground">{agent.hostname}</p>
+						</TableCell>
+						<TableCell>
+							<div class="flex flex-wrap gap-1">
+								{#each agent.tags ?? [] as tag (`system-${tag}`)}
+									<a
+										href={`/tags/${encodeURIComponent(tag)}`}
+										class="rounded-full border border-secondary/40 bg-secondary/15 px-2 py-px text-[10px] text-secondary transition-colors hover:border-primary/50 hover:bg-primary/10 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+										title={`Ver todas las instancias con tag ${tag}`}
+										onclick={(event) => event.stopPropagation()}
+									>{tag}</a>
+								{/each}
+								{#each agent.container_tags ?? [] as tag (`manual-${tag}`)}
+									<a
+										href={`/tags/${encodeURIComponent(tag)}`}
+										class="rounded-full border border-primary/35 bg-primary/10 px-2 py-px text-[10px] text-primary transition-colors hover:bg-primary/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+										title={`Ver todas las instancias con tag ${tag}`}
+										onclick={(event) => event.stopPropagation()}
+									>{tag}</a>
+								{/each}
+								{#if !agent.tags?.length && !agent.container_tags?.length}
+									<span class="text-muted-foreground">—</span>
 								{/if}
-							</p>
+							</div>
+						</TableCell>
+						<TableCell class="whitespace-nowrap text-right tabular-nums">
+							{fmtPct(agent.metrics?.cpu_pct)}
+						</TableCell>
+						<TableCell class="whitespace-nowrap text-right tabular-nums">
+							{#if agent.metrics?.ram_limit_mb}
+								{fmtBytesPairMb(agent.metrics.ram_used_mb, agent.metrics.ram_limit_mb)}
+							{:else}
+								{fmtBytesMb(agent.metrics?.ram_used_mb)}
+							{/if}
+							{#if ramPct != null}<span class="block text-[10px] text-muted-foreground">{ramPct.toFixed(1)} %</span>{/if}
+						</TableCell>
+						<TableCell class="whitespace-nowrap text-right tabular-nums" title="Recibido (Rx) / enviado (Tx)">
+							<span class="mr-1 inline-flex items-center gap-0.5 text-muted-foreground" aria-hidden="true">
+								<ArrowDown size={12} strokeWidth={1.8} />
+								<ArrowUp size={12} strokeWidth={1.8} />
+							</span>
+							{fmtBytesPairMb(agent.metrics?.rx_mb, agent.metrics?.tx_mb)}
+						</TableCell>
+						<TableCell class="whitespace-nowrap text-right tabular-nums">
+							{#if agent.disk_free_mb != null}
+								{fmtBytesUnitMb(agent.disk_free_mb)}
+								{#if agent.disk_total_mb != null && agent.disk_total_mb > 0}<span class="text-muted-foreground">/ {fmtBytesUnitMb(agent.disk_total_mb)}</span>{/if}
+							{:else}
+								<span class="text-muted-foreground">{fmtDisk(agent.disk_free_mb, agent.disk_total_mb)}</span>
+							{/if}
+							{#if diskFreePct != null}<span class="block text-[10px] text-muted-foreground">{diskFreePct.toFixed(1)} % libre</span>{/if}
+						</TableCell>
+						<TableCell class="whitespace-nowrap text-right tabular-nums">{fmtUptime(agent.metrics?.uptime_sec)}</TableCell>
+						<TableCell class="whitespace-nowrap text-right text-muted-foreground">{fmtAgo(agent.last_seen, nowSecs)}</TableCell>
+						<TableCell class="whitespace-nowrap text-xs text-muted-foreground">Pausadas</TableCell>
+						<TableCell class="whitespace-nowrap text-right">
+							{#if isAdmin}<Button variant="action" size="sm" onclick={(event) => { event.stopPropagation(); void setIgnored(agent, false); }} disabled={updatingIgnoredID === agent.id} title="Volver a monitorear">{updatingIgnoredID === agent.id ? 'Restaurando…' : 'Restaurar'}</Button>{/if}
+							<Button variant="action" size="sm" onclick={(event) => { event.stopPropagation(); openDetails(agent); }}>Historial</Button>
 						</TableCell>
 					</TableRow>
 				{/each}
@@ -523,54 +670,33 @@
 	{:else}
 		<!-- Grid de cards: auto-fill con mínimo 300px (desktop-first) -->
 		<div class="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-4">
-			{#each filtered as agent (agent.id)}
+			{#each pageAgents as agent (agent.id)}
 				<AgentCard {agent} onDetails={() => openDetails(agent)} />
 			{:else}
-				<p class="py-8 text-sm text-muted-foreground">
-					{#if tagFilter.length > 0}
-						Ningún agent con los tags seleccionados — probá con otros chips.
-					{:else if filter === 'offline'}
-						Ningún agent está offline — buen trópico.
-					{/if}
-				</p>
+				{#if pageRows.length === 0}
+					<p class="py-8 text-sm text-muted-foreground">
+						{#if tagFilter.length > 0}
+							Ningún agent con los tags seleccionados — probá con otros chips.
+						{:else if filter === 'offline'}
+							Ningún agent está offline — buen trópico.
+						{:else if filter === 'ignored'}
+							No hay contenedores ignorados.
+						{/if}
+					</p>
+				{/if}
+			{/each}
+			{#each pageIgnored as agent (agent.id)}
+				<AgentCard
+					{agent}
+					ignored
+					onDetails={() => openDetails(agent)}
+					onRestore={() => void setIgnored(agent, false)}
+					restorePending={updatingIgnoredID === agent.id}
+				/>
 			{/each}
 		</div>
 	{/if}
 
-	{#if ignoredAgents.length > 0}
-		<section class="dashboard-ignored" aria-labelledby="ignored-containers-title">
-			<header class="dashboard-ignored-heading">
-				<div>
-					<p class="page-subtitle font-display uppercase tracking-[0.14em]">Inventario visible</p>
-					<h2 id="ignored-containers-title" class="mt-1 font-display text-base font-semibold">Contenedores ignorados</h2>
-				</div>
-				<Badge variant="outline">{ignoredAgents.length} ignorado(s)</Badge>
-			</header>
-			<p class="text-sm text-muted-foreground">Siguen listados para que puedas identificarlos y volver a monitorearlos. No generan nuevas alertas ni métricas.</p>
-			<div class="dashboard-ignored-grid">
-				{#each ignoredAgents as agent (agent.id)}
-					<Card class="dashboard-ignored-card">
-						<div class="min-w-0">
-							<div class="flex flex-wrap items-center gap-2">
-								<h3 class="truncate text-sm font-semibold">{agent.name}</h3>
-								<Badge variant="outline">IGNORADO</Badge>
-							</div>
-							<p class="mt-1 truncate text-xs text-muted-foreground">{agent.hostname} · {agent.container_id?.slice(0, 12) ?? `contenedor #${agent.id}`}</p>
-						</div>
-						<div class="flex flex-wrap justify-end gap-1">
-							<Button variant="ghost" size="sm" onclick={() => openDetails(agent)}>Ver detalle</Button>
-							{#if isAdmin}
-								<Button variant="ghost" size="sm" onclick={() => void setIgnored(agent, false)} disabled={updatingIgnoredID === agent.id}>
-									<Eye size={14} aria-hidden="true" />
-									{updatingIgnoredID === agent.id ? 'Actualizando…' : 'Volver a monitorear'}
-								</Button>
-							{/if}
-						</div>
-					</Card>
-				{/each}
-			</div>
-		</section>
-	{/if}
 </div>
 
 <!-- Modal de detalle (vista rápida con historial); el agent es SIEMPRE el vivo del store -->

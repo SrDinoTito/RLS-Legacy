@@ -46,6 +46,7 @@ let refetchTimer: ReturnType<typeof setTimeout> | undefined;
 let pollTimer: ReturnType<typeof setInterval> | undefined;
 let firstErrorAt = 0;
 let connecting = false;
+let agentsRefreshInFlight: Promise<void> | null = null;
 
 /** Contador de eventos manejados — las páginas lo leen para refrescar datos locales. */
 function tick(): void {
@@ -62,26 +63,39 @@ function scheduleRefetch(delayMs = REFETCH_DEBOUNCE_MS): void {
 }
 
 /** GET /agents completo: reconstruye el mapa (fuente de verdad del dashboard). */
-export async function refreshAgents(): Promise<void> {
-	if (meta.loading) return;
+export function refreshAgents(): Promise<void> {
+	// Si hay una consulta en curso, los refreshes manuales y automáticos esperan
+	// la misma respuesta en vez de devolver antes o pisarse entre sí.
+	if (agentsRefreshInFlight) return agentsRefreshInFlight;
+
 	meta.loading = true;
-	try {
-		const res = await listAgents();
-		if (res.ok && res.data) {
-			agents.clear();
-			let openAlerts = 0;
-			for (const a of res.data) {
-				agents.set(a.id, a);
-				openAlerts += a.alert_count ?? 0;
+	agentsRefreshInFlight = (async () => {
+		try {
+			const res = await listAgents();
+			if (res.ok && res.data) {
+				// Reconciliar el mapa sin vaciarlo: clear()+set() mostraba un estado
+				// vacío intermedio en cada polling y hacía parpadear el tablero.
+				const receivedIDs = new Set<number>();
+				let openAlerts = 0;
+				for (const agent of res.data) {
+					receivedIDs.add(agent.id);
+					agents.set(agent.id, agent);
+					openAlerts += agent.alert_count ?? 0;
+				}
+				for (const agentID of agents.keys()) {
+					if (!receivedIDs.has(agentID)) agents.delete(agentID);
+				}
+				meta.activeAlerts = openAlerts;
+				tick();
 			}
-			meta.activeAlerts = openAlerts;
-			tick();
+		} catch {
+			// backend caído: el status SSE/polling lo comunica, no duplicamos toasts
+		} finally {
+			meta.loading = false;
+			agentsRefreshInFlight = null;
 		}
-	} catch {
-		// backend caído: el status SSE/polling lo comunica, no duplicamos toasts
-	} finally {
-		meta.loading = false;
-	}
+	})();
+	return agentsRefreshInFlight;
 }
 
 /** Apply a successful admin-side per-agent tag edit optimistically to the live fleet. */

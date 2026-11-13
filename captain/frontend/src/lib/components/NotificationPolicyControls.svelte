@@ -129,7 +129,7 @@
 		<div class="grid gap-2 sm:grid-cols-2">
 			<label class="flex cursor-pointer items-start gap-2 rounded-lg border border-border/70 bg-background/40 p-2.5">
 				<input
-					class="mt-0.5 accent-primary"
+					class="theme-checkbox mt-0.5"
 					type="checkbox"
 					checked={policy.notifications_enabled}
 					disabled={saving || (scope === 'agent' && policy.vps_notifications_enabled === false)}
@@ -143,7 +143,7 @@
 			</label>
 			<label class="flex cursor-pointer items-start gap-2 rounded-lg border border-border/70 bg-background/40 p-2.5">
 				<input
-					class="mt-0.5 accent-primary"
+					class="theme-checkbox mt-0.5"
 					type="checkbox"
 					checked={policy.resource_alerts_enabled}
 					disabled={saving || (scope === 'agent' && policy.vps_notifications_enabled === false)}

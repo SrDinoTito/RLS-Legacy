@@ -67,6 +67,42 @@ func (s *Server) handleListAlerts(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+// GET /api/v1/agents/{id}/alerts?scope=active|all — alert history scoped to
+// one container. scope=all is the container's permanent event record.
+func (s *Server) handleAgentAlerts(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil || id <= 0 {
+		writeError(w, http.StatusBadRequest, "invalid agent id")
+		return
+	}
+	scope := r.URL.Query().Get("scope")
+	if scope == "" {
+		scope = "active"
+	}
+	if scope != "active" && scope != "all" {
+		writeError(w, http.StatusBadRequest, "scope must be 'active' or 'all'")
+		return
+	}
+	if _, err := s.store.AgentByID(r.Context(), id); err != nil {
+		if err == store.ErrNotFound {
+			writeError(w, http.StatusNotFound, "agent not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "database error")
+		return
+	}
+	alerts, err := s.store.ListAlertsByAgent(r.Context(), id, scope == "active")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "database error")
+		return
+	}
+	out := make([]alertDTO, 0, len(alerts))
+	for _, alert := range alerts {
+		out = append(out, alertToDTO(alert))
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
 // POST /api/v1/alerts/{id}/resolve — stamps resolved_at = now. 404 before
 // the fact if the alert does not exist; 409 when it was already resolved.
 // Broadcasts alert_resolved so open dashboards can clear the badge.

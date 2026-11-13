@@ -19,7 +19,19 @@
 	 * mini-label "últimos datos · visto hace X" encima; el footer solo las
 	 * lleva cuando está ONLINE.
 	 */
-	let { agent, onDetails }: { agent: Agent; onDetails?: () => void } = $props();
+	let {
+		agent,
+		onDetails,
+		ignored = false,
+		onRestore,
+		restorePending = false
+	}: {
+		agent: Agent;
+		onDetails?: () => void;
+		ignored?: boolean;
+		onRestore?: () => void;
+		restorePending?: boolean;
+	} = $props();
 
 	const nowSecs = $state(Math.floor(Date.now() / 1000));
 
@@ -36,7 +48,9 @@
 
 	const offline = $derived(agent.status !== 'online');
 	const cardClass = $derived(
-		offline
+		ignored
+			? 'agent-card--ignored text-muted-foreground'
+			: offline
 			// glow destructive sutil y PERSISTENTE en cards OFFLINE (exigido por la calidad visual)
 			? 'agent-card--offline border-destructive/50 shadow-[0_0_14px_hsl(8_80%_55%/0.15)]'
 			: 'agent-card--online hover:glow-gold'
@@ -82,7 +96,9 @@
 				</div>
 			{/if}
 		</div>
-		{#if offline}
+		{#if ignored}
+			<Badge variant="outline">IGNORADO</Badge>
+		{:else if offline}
 			<Badge variant="destructive">OFFLINE</Badge>
 		{:else}
 			<Badge variant="default">ONLINE</Badge>
@@ -91,18 +107,23 @@
 
 	<!-- Métricas 2×2 + sparkline + estado -->
 	<div class="grid gap-3 px-4 pb-4">
-		{#if offline}
+		{#if ignored}
+			<div class="flex items-center justify-between text-[10px] uppercase tracking-wider text-muted-foreground">
+				<span>última muestra</span>
+				<span class="tabular-nums">visto {fmtAgo(agent.last_seen, nowSecs)}</span>
+			</div>
+		{:else if offline}
 			<!-- métricas atenuadas: son el ÚLTIMO beat persistido, no en vivo -->
 			<div class="flex items-center justify-between text-[10px] uppercase tracking-wider text-muted-foreground">
 				<span>últimos datos</span>
 				<span class="tabular-nums">visto {fmtAgo(agent.last_seen, nowSecs)}</span>
 			</div>
 		{/if}
-		<AgentMetrics agent={agent} compact muted={offline} />
+		<AgentMetrics agent={agent} compact muted={offline || ignored} />
 
-		<div class="grid gap-1 text-secondary" class:opacity-55={offline} aria-hidden={offline || undefined}>
+		<div class="grid gap-1 text-secondary" class:opacity-55={offline || ignored} aria-hidden={offline || ignored || undefined}>
 			<div class="flex items-center justify-between text-xs text-muted-foreground">
-				<span>CPU · últimas 6 h · lectura cada 5 min</span>
+				<span>{ignored ? 'CPU · histórico guardado' : 'CPU · últimas 6 h · lectura cada 5 min'}</span>
 				{#if !sparklineReady}
 					{#if offline}
 						<span>cargando…</span>
@@ -120,19 +141,30 @@
 
 		<div class="flex items-center justify-between gap-2 text-xs text-muted-foreground">
 			<span class="truncate">
-				{#if offline}
+				{#if ignored}
+					monitoreo pausado
+				{:else if offline}
 					intervalo {agent.interval}s
 				{:else}
 					visto {fmtAgo(agent.last_seen, nowSecs)} · intervalo {agent.interval}s
 				{/if}
 			</span>
-			{#if agent.alert_count > 0}
+			{#if ignored}
+				<span>Alertas pausadas</span>
+			{:else if agent.alert_count > 0}
 				<Badge variant="destructive">{agent.alert_count} alerta(s)</Badge>
 			{/if}
 		</div>
-		{#if onDetails}
+		{#if onDetails || onRestore}
 			<div class="agent-card-actions">
-				<Button variant="ghost" size="sm" onclick={onDetails}>Ver configuración e historial</Button>
+				{#if onRestore}
+					<Button variant="action" size="sm" onclick={onRestore} disabled={restorePending} title="Volver a monitorear">
+						{restorePending ? 'Restaurando…' : 'Restaurar'}
+					</Button>
+				{/if}
+				{#if onDetails}
+					<Button variant="action" size="sm" onclick={onDetails}>{ignored ? 'Historial' : 'Ver configuración e historial'}</Button>
+				{/if}
 			</div>
 		{/if}
 	</div>

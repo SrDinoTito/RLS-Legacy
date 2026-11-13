@@ -48,7 +48,17 @@
 	onMount(() => {
 		void (async () => {
 			const user = await auth.me();
-			if (!user && page.url.pathname !== '/login' && page.url.pathname !== '/bootstrap') {
+			if (user) return;
+
+			const bootstrapRequired = await auth.bootstrapRequired();
+			const path = page.url.pathname;
+			if (bootstrapRequired === true && path !== '/bootstrap') {
+				goto('/bootstrap');
+			} else if (bootstrapRequired === false && path !== '/login') {
+				goto('/login');
+			} else if (bootstrapRequired === null && path !== '/login' && path !== '/bootstrap') {
+				// If the API is temporarily unavailable, keep the safe sign-in route;
+				// the login page will show the existing backend-unavailable message.
 				goto('/login');
 			}
 		})();

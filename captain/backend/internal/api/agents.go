@@ -72,6 +72,19 @@ func (s *Server) requireAgentToken(next http.Handler) http.Handler {
 	})
 }
 
+// requireVPSInstallToken protects installer and artifact endpoints. Only
+// active credentials created for the VPS/Stowaway flow may fetch them.
+func (s *Server) requireVPSInstallToken(next http.Handler) http.Handler {
+	return s.requireAgentToken(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		token, _ := r.Context().Value(ctxKeyToken{}).(*store.Token)
+		if token == nil || !token.VPSScoped {
+			writeError(w, http.StatusForbidden, "a VPS-scoped token is required")
+			return
+		}
+		next.ServeHTTP(w, r)
+	}))
+}
+
 type heartbeatMetrics struct {
 	CPUPct    *float64 `json:"cpu_pct"`
 	RamUsedMB *float64 `json:"ram_used_mb"`

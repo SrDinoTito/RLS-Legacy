@@ -9,10 +9,11 @@
 # por eso se exporta PATH y GOTOOLCHAIN=auto para auto-descargar 1.26.
 # syntax=docker/dockerfile:1
 
-FROM golang:1.22-alpine AS build
+FROM --platform=$BUILDPLATFORM golang:1.22-alpine AS build
 ENV PATH=/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     GOTOOLCHAIN=auto \
     CGO_ENABLED=0
+ARG TARGETARCH
 
 WORKDIR /src
 COPY backend/go.mod backend/go.sum ./
@@ -20,8 +21,9 @@ RUN --mount=type=cache,target=/go/pkg/mod go mod download
 
 COPY backend/ ./
 RUN --mount=type=cache,target=/go/pkg/mod \
-    go build -trimpath -ldflags "-s -w" -o /out/server ./cmd/server && \
+    GOOS=linux GOARCH=$TARGETARCH go build -trimpath -ldflags "-s -w" -o /out/server ./cmd/server && \
     mkdir -p /out/downloads && \
+    mkdir -p /out/data && chmod 0770 /out/data && \
     GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o /out/downloads/rls-stowaway-linux-amd64 ./cmd/stowaway && \
     GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "-s -w" -o /out/downloads/rls-stowaway-linux-arm64 ./cmd/stowaway && \
     cd /out/downloads && \
@@ -30,16 +32,12 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 
 # ---------------------------------------------------------------- runtime ---
 FROM alpine:3.20
-# `nobody` (uid 65534) ya existe en alpine. El volumen /data se copia con
-# ownership nobody:root al crearse, así USER nobody puede escribir SQLite/WAL.
-RUN apk add --no-cache ca-certificates \
- && mkdir -p /data \
- && chown nobody:root /data \
- && chmod 0770 /data
-
 COPY --from=build /out/server /srv/server
 COPY --from=build /out/downloads/ /srv/downloads/
-RUN chmod 0755 /srv/server
+COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+# `nobody` (uid 65534) existe en Alpine; copiar el directorio ya preparado
+# evita ejecutar herramientas de la arquitectura destino durante buildx.
+COPY --from=build --chown=65534:0 --chmod=0770 /out/data/ /data/
 
 # Datos de SQLite (usuarios, agentes, metricas, alertas) fuera del contenedor.
 VOLUME /data
@@ -52,5 +50,5 @@ ENTRYPOINT ["/srv/server"]
 
 LABEL org.opencontainers.image.title="rls-captain-backend" \
       org.opencontainers.image.description="Backend Go + Chi + SQLite del dashboard RLS Legacy (heartbeat, offline, tokens, thresholds, alertas, SSE)." \
-      org.opencontainers.image.version="1.0.0" \
+      org.opencontainers.image.version="1.0.1" \
       org.opencontainers.image.licenses="MIT"

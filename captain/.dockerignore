@@ -14,3 +14,8 @@ backups
 **/*.db-shm
 **/E
 .git
+# Configuración y credenciales locales: no se necesitan para compilar imágenes.
+.env
+.env.*
+**/.env
+**/.env.*

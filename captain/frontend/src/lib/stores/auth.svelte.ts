@@ -1,5 +1,11 @@
 import { goto } from '$app/navigation';
-import { authLogin, authBootstrap, authMe, authLogout } from '#lib/api/client.js';
+import {
+	authLogin,
+	authBootstrap,
+	authBootstrapStatus,
+	authMe,
+	authLogout
+} from '#lib/api/client.js';
 
 export interface AuthUser {
 	id: number;
@@ -50,6 +56,11 @@ export async function me(): Promise<AuthUser | null> {
 	return null;
 }
 
+async function bootstrapRequired(): Promise<boolean | null> {
+	const res = await authBootstrapStatus();
+	return res.ok && res.data ? res.data.required : null;
+}
+
 /** Logout tolerant (REQ-024): cualquier error igualmente limpia la sesión local. */
 export async function logout(): Promise<void> {
 	try {
@@ -68,6 +79,7 @@ export const auth = {
 	},
 	login,
 	bootstrapUser,
+	bootstrapRequired,
 	me,
 	logout
 };

@@ -8,6 +8,7 @@ CONFIG_DIR=/etc/rls-stowaway
 CONFIG_FILE=$CONFIG_DIR/bridge.env
 UNIT_FILE=/etc/systemd/system/rls-stowaway.service
 DEFAULT_DASHBOARD_URL='@@DASHBOARD_URL@@'
+DEFAULT_TOKEN='@@TOKEN@@'
 
 fail() { printf 'Error: %s\n' "$*" >&2; exit 1; }
 say() { printf '%s\n' "$*"; }
@@ -50,7 +51,7 @@ case "$DASHBOARD_URL" in
 esac
 case "$DASHBOARD_URL" in *[!A-Za-z0-9._~:/%-]*) fail 'La URL contiene caracteres no permitidos.' ;; esac
 
-TOKEN=${RLS_TOKEN:-}
+TOKEN=${RLS_TOKEN:-$DEFAULT_TOKEN}
 if [ -z "$TOKEN" ]; then
 	printf 'Token de enrolamiento (la entrada no se muestra): ' > /dev/tty
 	if command -v stty >/dev/null 2>&1; then stty -echo < /dev/tty; fi
@@ -66,13 +67,11 @@ trap 'rm -rf "$TMP_DIR"' EXIT HUP INT TERM
 BASE_URL=$DASHBOARD_URL
 ARTIFACT_URL=$BASE_URL/downloads/rls-stowaway-linux/$ARCH
 say "Descargando Stowaway para Linux/$ARCH desde el Dashboard…"
-if command -v curl >/dev/null 2>&1; then
-	fetch() { curl --fail --location --silent --show-error "$1"; }
-elif command -v wget >/dev/null 2>&1; then
-	fetch() { wget -qO- "$1"; }
-else
-	fail 'Instala curl o wget para descargar el binario.'
-fi
+command -v curl >/dev/null 2>&1 || fail 'Instala curl para descargar el binario.'
+AUTH_CONFIG=$TMP_DIR/curl-auth.conf
+printf 'header = "Authorization: Bearer %s"\n' "$TOKEN" > "$AUTH_CONFIG"
+chmod 0600 "$AUTH_CONFIG"
+fetch() { curl --fail --location --silent --show-error --config "$AUTH_CONFIG" "$1"; }
 fetch "$ARTIFACT_URL" > "$TMP_DIR/rls-stowaway" || fail 'No se pudo descargar el binario.'
 EXPECTED=$(fetch "$ARTIFACT_URL.sha256" | awk 'NR == 1 {print $1}') || fail 'No se pudo descargar el checksum.'
 case "$EXPECTED" in *[!0-9a-fA-F]*|'') fail 'El checksum recibido no es válido.' ;; esac

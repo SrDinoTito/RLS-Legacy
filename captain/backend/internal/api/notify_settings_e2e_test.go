@@ -170,7 +170,7 @@ func TestE2E_NotifySettingsDashboardChannels(t *testing.T) {
 
 	// PUT válido: discord webhook + telegram token/chat (mismo cuerpo real).
 	if r := do(t, admin, http.MethodPut, base+"/api/v1/notify/settings",
-		`{"discord_webhook_url":"https://discord.com/api/webhooks/111222333/aaBBccDDxx",
+		`{"discord_webhook_url":"https://discord.com/api/webhooks/000000000000000000/TEST-WEBHOOK-BBccDDxx",
 		"telegram_bot_token":"987654321:tStUvWxYz","telegram_chat_id":"-100"}`); r.status != http.StatusOK {
 		t.Fatalf("PUT settings: got %d %s", r.status, r.body)
 	}
@@ -255,7 +255,7 @@ func TestE2E_NotifySettingsDashboardChannels(t *testing.T) {
 // (RLS_NOTIF_*): alert lands in the fake webhook and GET masks the env URL.
 func TestE2E_NotifySettingsEnvFallback(t *testing.T) {
 	discord, _, rt := newFakePair(t)
-	env := notify.Config{DiscordWebhookURL: "https://discord.com/api/webhooks/999888777/envenvno"}
+	env := notify.Config{DiscordWebhookURL: "https://discord.com/api/webhooks/000000000000000000/TEST-ENV-envenvno"}
 	srv, st, broker, notifier := newNotifySettingsServer(t, env, rt)
 	base := srv.URL
 	admin := bootstrapAdmin(t, srv)

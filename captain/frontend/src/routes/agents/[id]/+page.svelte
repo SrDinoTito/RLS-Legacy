@@ -5,7 +5,7 @@
 		listAgents,
 		agentHistory,
 		putThresholds,
-		listAlerts,
+		listAgentAlerts,
 		resolveAlert
 	} from '#lib/api/client.js';
 	import type { Agent, HistoryPoint } from '#lib/api/types.js';
@@ -19,6 +19,7 @@
 	import { Input } from '#lib/components/ui/input/index.js';
 	import { Tabs } from '#lib/components/ui/tabs/index.js';
 	import { Badge } from '#lib/components/ui/badge/index.js';
+	import PaginationControls from '#lib/components/PaginationControls.svelte';
 	import {
 		Card,
 		CardContent,
@@ -56,6 +57,8 @@
 	let tf = $state<TF>('1h');
 	let alerts = $state<NormalizedAlert[]>([]);
 	let loadingHist = $state(false);
+	const alertPageSize = 8;
+	let alertPage = $state(0);
 
 	let thrCpu = $state('90');
 	let thrRam = $state('95');
@@ -88,9 +91,8 @@
 
 	function loadAlerts(): void {
 		void (async () => {
-			const res = await listAlerts('all');
-			// normalizeAlerts: rows null-safe (value/agent_name nullable, shape v2)
-			alerts = normalizeAlerts(res.data).filter((a) => a.agent_id === idNum);
+			const res = await listAgentAlerts(idNum, 'all');
+			alerts = normalizeAlerts(res.data);
 		})();
 	}
 
@@ -163,6 +165,7 @@
 	const rxData = $derived(hist.map((p) => p.rx_mb));
 	const txData = $derived(hist.map((p) => p.tx_mb));
 	const hasData = $derived(hist.length > 0);
+	const pageAlerts = $derived(alerts.slice(alertPage * alertPageSize, (alertPage + 1) * alertPageSize));
 </script>
 
 <svelte:head>
@@ -348,21 +351,21 @@
 				</div>
 			</CardContent>
 		</Card>
-	</div>
 
-	<!-- Timeline de alertas del agent -->
-	<Card>
+		<!-- Alertas y métricas forman una sola vista del historial de actividad. -->
+		<Card class="xl:col-span-2">
 		<CardHeader>
-			<CardTitle class="text-base">Alertas del agent</CardTitle>
+			<CardTitle class="text-base">Historial y eventos del contenedor</CardTitle>
 			<CardDescription>
-				{alerts.filter((a) => !a.resolved_at).length} abierta(s) de {alerts.length}
+				{alerts.filter((a) => !a.resolved_at).length} alerta(s) abierta(s) de {alerts.length}; se muestran junto al historial de métricas.
 				{#if loadingHist && !hasData}
 					· cargando historia…
 				{/if}
 			</CardDescription>
 		</CardHeader>
-		<CardContent class="grid gap-2">
-			{#each alerts as alert (alert.id)}
+		<CardContent class="grid gap-3">
+			<div class="grid gap-2">
+			{#each pageAlerts as alert (alert.id)}
 				<div
 					class="flex items-start justify-between gap-4 border-b border-border/60 pb-2 last:border-b-0"
 				>
@@ -394,6 +397,9 @@
 			{:else}
 				<p class="text-sm text-muted-foreground">Sin alertas registradas para este agent.</p>
 			{/each}
+			</div>
+			<PaginationControls bind:page={alertPage} pageSize={alertPageSize} total={alerts.length} itemLabel="eventos" />
 		</CardContent>
-	</Card>
+		</Card>
+	</div>
 </div>

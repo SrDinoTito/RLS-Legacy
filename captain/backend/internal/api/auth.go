@@ -59,6 +59,17 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, meResponse{Username: user.Username, Role: user.Role})
 }
 
+// GET /api/v1/auth/bootstrap/status — public first-run check; exposes only
+// whether the initial administrator still needs setup, never account details.
+func (s *Server) handleBootstrapStatus(w http.ResponseWriter, r *http.Request) {
+	n, err := s.store.CountUsers(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "database error")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"required": n == 0})
+}
+
 // POST /api/v1/auth/bootstrap — open only while there are zero users; creates
 // the first admin.
 func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {

@@ -4,6 +4,7 @@ package api
 import (
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -22,13 +23,19 @@ const sessionTTL = 24 * time.Hour
 
 // Server holds shared dependencies for all handlers.
 type Server struct {
-	store       *store.Store
-	jwtSecret   []byte
-	now         func() time.Time // injectable clock (tests)
-	broker      *sse.Broker      // SSE fan-out (REQ-018); never nil
-	notifier    *notify.Notifier // outbound alert notifications (REQ-050); nil-safe
-	notifEnv    notify.Config    // RLS_NOTIF_* env fallback (GET settings masking); zero = none
-	downloadDir string           // allowlisted Stowaway artifacts bundled in the Captain image
+	store        *store.Store
+	jwtSecret    []byte
+	now          func() time.Time // injectable clock (tests)
+	broker       *sse.Broker      // SSE fan-out (REQ-018); never nil
+	notifier     *notify.Notifier // outbound alert notifications (REQ-050); nil-safe
+	notifEnv     notify.Config    // RLS_NOTIF_* env fallback (GET settings masking); zero = none
+	downloadDir  string           // allowlisted Stowaway artifacts bundled in the Captain image
+	dashboardURL string           // required RLS_PUBLIC_URL used by installer instructions
+}
+
+// PublicConfig contains non-secret runtime settings safe to expose to the UI.
+type PublicConfig struct {
+	DashboardURL string
 }
 
 // New builds a Server bound to the given store and signing secret. Extras
@@ -42,6 +49,7 @@ func New(st *store.Store, jwtSecret []byte, extras ...any) *Server {
 	b := sse.New()
 	var n *notify.Notifier
 	var envCfg notify.Config
+	var publicCfg PublicConfig
 	for _, x := range extras {
 		switch one := x.(type) {
 		case *sse.Broker:
@@ -54,13 +62,15 @@ func New(st *store.Store, jwtSecret []byte, extras ...any) *Server {
 			}
 		case notify.Config:
 			envCfg = one
+		case PublicConfig:
+			publicCfg = one
 		}
 	}
 	downloadDir := os.Getenv("RLS_BRIDGE_DOWNLOAD_DIR")
 	if downloadDir == "" {
 		downloadDir = "/srv/downloads"
 	}
-	return &Server{store: st, jwtSecret: jwtSecret, now: time.Now, broker: b, notifier: n, notifEnv: envCfg, downloadDir: downloadDir}
+	return &Server{store: st, jwtSecret: jwtSecret, now: time.Now, broker: b, notifier: n, notifEnv: envCfg, downloadDir: downloadDir, dashboardURL: strings.TrimRight(strings.TrimSpace(publicCfg.DashboardURL), "/")}
 }
 
 // Handler returns the fully wired chi router (middleware included).
@@ -72,10 +82,12 @@ func (s *Server) Handler() http.Handler {
 
 	// Public endpoints: no auth.
 	r.Get("/healthz", s.handleHealthz)
-	r.Get("/script.sh", s.handleBridgeInstallScript)
-	r.Get("/downloads/rls-stowaway-linux/{asset}", s.handleBridgeDownload)
+	r.Get("/api/v1/public-config", s.handlePublicConfig)
+	r.With(s.requireVPSInstallToken).Get("/script.sh", s.handleBridgeInstallScript)
+	r.With(s.requireVPSInstallToken).Get("/downloads/rls-stowaway-linux/{asset}", s.handleBridgeDownload)
 
 	r.Route("/api/v1", func(r chi.Router) {
+		r.Get("/auth/bootstrap/status", s.handleBootstrapStatus)
 		r.Post("/auth/bootstrap", s.handleBootstrap)
 		r.Post("/auth/login", s.handleLogin)
 		r.Post("/auth/logout", s.handleLogout)
@@ -95,6 +107,7 @@ func (s *Server) Handler() http.Handler {
 			// authenticated dashboard user).
 			r.Get("/agents", s.handleListAgents)
 			r.Get("/agents/{id}/history", s.handleAgentHistory)
+			r.Get("/agents/{id}/alerts", s.handleAgentAlerts)
 			r.Get("/agents/{id}/thresholds", s.handleGetThresholds)
 			r.Put("/agents/{id}/thresholds", s.handlePutThresholds)
 			r.Get("/alerts", s.handleListAlerts)

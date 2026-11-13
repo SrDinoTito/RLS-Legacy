@@ -12,7 +12,7 @@
 	let { open = $bindable(false) }: { open?: boolean } = $props();
 </script>
 
-<Dialog bind:open title="Tokens de VPS" contentClass="w-[min(96vw,980px)]">
+<Dialog bind:open title="Tokens de VPS" class="tokens-manage-dialog" contentClass="w-[min(96vw,1160px)]">
 	{#if open}
 		<TokensPanel />
 	{/if}

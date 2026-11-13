@@ -1,16 +1,14 @@
 # rls-legacy — compose del dashboard (captain). REQ-030/031, TASK-008, DEC-006.
 #
-# Despliegue: cp compose.env.example .env  →  docker compose up -d --build
+# Despliegue: cp compose.env.example .env  →  docker compose pull && docker compose up -d
 # Extreme-lightweight: imágenes alpine multi-stage, límites por servicio,
 # logs rotados 5MB × 2 en TODOS los servicios.
 name: rls-legacy
 
 services:
   backend:
-    build:
-      context: .
-      dockerfile: docker/backend.Dockerfile
-    image: rls-captain-backend
+    # latest sigue el release más reciente; reemplaza el tag por vX.Y.Z para fijar/retroceder.
+    image: ghcr.io/srdinotito/rls-legacy-backend:latest
     environment:
       RLS_DB_PATH: /data/rls.db
       RLS_PORT: "8080"
@@ -22,9 +20,9 @@ services:
       RLS_NOTIF_DISCORD_WEBHOOK_URL: ${RLS_NOTIF_DISCORD_WEBHOOK_URL:-}
       RLS_NOTIF_TELEGRAM_BOT_TOKEN: ${RLS_NOTIF_TELEGRAM_BOT_TOKEN:-}
       RLS_NOTIF_TELEGRAM_CHAT_ID: ${RLS_NOTIF_TELEGRAM_CHAT_ID:-}
-      # RLS_PUBLIC_URL: tu URL pública del dashboard (TLS o localhost);
-      # cuando está seteada, las notificaciones llevan link directo al panel.
-      RLS_PUBLIC_URL: ${RLS_PUBLIC_URL:-}
+      # Base URL obligatoria para generar instrucciones y descargas del Stowaway.
+      RLS_PUBLIC_URL: ${RLS_PUBLIC_URL:?Configura RLS_PUBLIC_URL (HTTPS remoto o localhost para pruebas)}
+    # La UI Bun hace proxy interno a backend:8080; no se publica el backend.
     volumes:
       # REQ-060 (TASK-014): DB en carpeta VISIBLE del host (captain/data/rls.db)
       # para que scripts de backup/restore funcionen directo con docker run.
@@ -49,16 +47,16 @@ services:
       start_period: 10s
 
   frontend:
-    build:
-      context: .
-      dockerfile: docker/frontend.Dockerfile
-    image: rls-captain-frontend
+    image: ghcr.io/srdinotito/rls-legacy-frontend:latest
+    environment:
+      PORT: "3008"
+      BACKEND_URL: http://backend:8080
     ports:
-      - "${RLS_PORT:-3008}:80"
+      - "${RLS_PORT:-3008}:3008"
     depends_on:
       backend:
         condition: service_healthy
-    mem_limit: 64m
+    mem_limit: 128m
     cpus: 0.25
     restart: unless-stopped
     logging:
@@ -66,6 +64,12 @@ services:
       options:
         max-size: "5m"
         max-file: "2"
+    healthcheck:
+      test: ["CMD", "bun", "-e", "fetch('http://127.0.0.1:3008/healthz').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
 # (REQ-060: ya no hay volumen named en uso — la DB vive en captain/data/
 # bind-mounted. El volumen `rls-legacy_rls-data` suelto queda afuera de este

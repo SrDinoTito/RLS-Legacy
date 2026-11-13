@@ -597,6 +597,91 @@ func TestE2E_ThresholdAlertsAndResolution(t *testing.T) {
 	_ = ctx
 }
 
+func TestE2E_ContainerAlertHistoryIsScopedAndRetained(t *testing.T) {
+	srv, st, _ := newTask4Server(t)
+	admin := bootstrapAdmin(t, srv)
+
+	type agentRow struct {
+		ID   int64  `json:"id"`
+		Name string `json:"name"`
+	}
+	for i, tc := range []struct {
+		token string
+		name  string
+		host  string
+	}{
+		{token: "rlst_alerts_api", name: "api", host: "host-a"},
+		{token: "rlst_alerts_cache", name: "cache", host: "host-b"},
+	} {
+		seedToken(t, st, tc.token)
+		body := strings.Replace(validBeat(), `"web-1"`, `"`+tc.host+`"`, 1)
+		body = strings.Replace(body, `"nginx-prod"`, `"`+tc.name+`"`, 1)
+		body = strings.Replace(body, "1700000000000", fmt.Sprintf("170000000000%d", i+1), 1)
+		if result := beat(t, srv, tc.token, body); result.status != http.StatusOK {
+			t.Fatalf("register %s container: %d %s", tc.name, result.status, result.body)
+		}
+	}
+	response := do(t, admin, http.MethodGet, srv.URL+"/api/v1/agents", "")
+	var agents []agentRow
+	if response.status != http.StatusOK || json.Unmarshal([]byte(response.body), &agents) != nil || len(agents) != 2 {
+		t.Fatalf("list containers: %d %s", response.status, response.body)
+	}
+	ids := make(map[string]int64, len(agents))
+	for _, agent := range agents {
+		ids[agent.Name] = agent.ID
+	}
+	apiID, cacheID := ids["api"], ids["cache"]
+	if apiID == 0 || cacheID == 0 {
+		t.Fatalf("containers were not registered as expected: %+v", agents)
+	}
+
+	apiAlert := &store.Alert{AgentID: apiID, Type: "offline", Message: sql.NullString{String: "sin comunicación", Valid: true}, FiredAt: 1800000000}
+	cacheAlert := &store.Alert{AgentID: cacheID, Type: "high_cpu", Value: sql.NullFloat64{Float64: 96, Valid: true}, Message: sql.NullString{String: "CPU alta", Valid: true}, FiredAt: 1800000001}
+	if err := st.InsertAlert(t.Context(), apiAlert); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.ResolveAlertByID(t.Context(), apiAlert.ID, 1800000100); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.InsertAlert(t.Context(), cacheAlert); err != nil {
+		t.Fatal(err)
+	}
+
+	var apiHistory []struct {
+		AgentID    int64  `json:"agent_id"`
+		AgentName  string `json:"agent_name"`
+		Type       string `json:"type"`
+		ResolvedAt *int64 `json:"resolved_at"`
+	}
+	url := fmt.Sprintf("%s/api/v1/agents/%d/alerts?scope=all", srv.URL, apiID)
+	response = do(t, admin, http.MethodGet, url, "")
+	if response.status != http.StatusOK || json.Unmarshal([]byte(response.body), &apiHistory) != nil || len(apiHistory) != 1 {
+		t.Fatalf("API container alert record: %d %s", response.status, response.body)
+	}
+	if apiHistory[0].AgentID != apiID || apiHistory[0].AgentName != "api" || apiHistory[0].Type != "offline" || apiHistory[0].ResolvedAt == nil {
+		t.Fatalf("container alert record lost its identity or resolution: %+v", apiHistory[0])
+	}
+
+	// Default scope hides resolved records; the full record keeps them.
+	response = do(t, admin, http.MethodGet, fmt.Sprintf("%s/api/v1/agents/%d/alerts", srv.URL, apiID), "")
+	if response.status != http.StatusOK || response.body != "[]\n" {
+		t.Fatalf("active container alerts should be empty: %d %s", response.status, response.body)
+	}
+	response = do(t, admin, http.MethodGet, fmt.Sprintf("%s/api/v1/agents/%d/alerts?scope=all", srv.URL, cacheID), "")
+	if response.status != http.StatusOK || !strings.Contains(response.body, `"type":"high_cpu"`) || strings.Contains(response.body, `"type":"offline"`) {
+		t.Fatalf("container alert history leaked records from another container: %d %s", response.status, response.body)
+	}
+	if response = do(t, admin, http.MethodGet, srv.URL+"/api/v1/agents/999/alerts", ""); response.status != http.StatusNotFound {
+		t.Fatalf("unknown container history: %d %s", response.status, response.body)
+	}
+	if response = do(t, admin, http.MethodGet, fmt.Sprintf("%s/api/v1/agents/%d/alerts?scope=bad", srv.URL, apiID), ""); response.status != http.StatusBadRequest {
+		t.Fatalf("invalid alert history scope: %d %s", response.status, response.body)
+	}
+	if response = do(t, nil, http.MethodGet, url, ""); response.status != http.StatusUnauthorized {
+		t.Fatalf("anonymous container alert history: %d %s", response.status, response.body)
+	}
+}
+
 // ------------------------------------------------------------------- SSE --
 
 // readFrame reads ONE SSE/HTTP frame (through \n\n) from the persistent

@@ -83,6 +83,22 @@ export interface AuthMe {
 	role: string;
 }
 
+export interface AuthBootstrapStatus {
+	required: boolean;
+}
+
+export interface PublicConfig {
+	dashboard_url: string;
+}
+
+export function getPublicConfig(): Promise<ApiResult<PublicConfig>> {
+	return apiFetch<PublicConfig>('/api/v1/public-config');
+}
+
+export function authBootstrapStatus(): Promise<ApiResult<AuthBootstrapStatus>> {
+	return apiFetch<AuthBootstrapStatus>('/api/v1/auth/bootstrap/status');
+}
+
 export function authLogin(username: string, password: string): Promise<ApiResult<AuthMe>> {
 	return apiFetch<AuthMe>('/api/v1/auth/login', {
 		method: 'POST',
@@ -183,6 +199,11 @@ export function putAgentMonitoringIgnored(id: number, ignored: boolean): Promise
 /** scope=active (default backend) | all. */
 export function listAlerts(scope: 'active' | 'all'): Promise<ApiResult<Alert[]>> {
 	return apiFetch<Alert[]>(`/api/v1/alerts?scope=${scope}`);
+}
+
+/** Alertas propias de un contenedor; scope=all conserva el historial cerrado. */
+export function listAgentAlerts(id: number, scope: 'active' | 'all'): Promise<ApiResult<Alert[]>> {
+	return apiFetch<Alert[]>(`/api/v1/agents/${id}/alerts?scope=${scope}`);
 }
 
 /** 200 ok; 409 ya resuelta; 404 no existe. */

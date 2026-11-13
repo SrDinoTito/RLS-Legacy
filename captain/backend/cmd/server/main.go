@@ -28,6 +28,7 @@ import (
 type Config struct {
 	Port              string
 	DBPath            string
+	DashboardURL      string // required RLS_PUBLIC_URL for installer downloads and alert links
 	JWTSecret         []byte
 	RetentionDays     int64         // RLS_RETENTION_DAYS: retention window for REQ-040 pruning
 	PruneTickSecond   int64         // RLS_PRUNE_TICK_SEC: retention sweep cadence (REQ-040)
@@ -37,6 +38,11 @@ type Config struct {
 
 // configFromEnv resolves env vars with the documented defaults.
 func configFromEnv() (*Config, error) {
+	dashboardURL, err := api.NormalizeDashboardURL(os.Getenv("RLS_PUBLIC_URL"))
+	if err != nil {
+		return nil, err
+	}
+
 	port, ok := os.LookupEnv("RLS_PORT")
 	if !ok || port == "" {
 		port = "8080"
@@ -101,7 +107,7 @@ func configFromEnv() (*Config, error) {
 		DiscordWebhookURL: os.Getenv("RLS_NOTIF_DISCORD_WEBHOOK_URL"),
 		TelegramBotToken:  os.Getenv("RLS_NOTIF_TELEGRAM_BOT_TOKEN"),
 		TelegramChatID:    os.Getenv("RLS_NOTIF_TELEGRAM_CHAT_ID"),
-		PublicURL:         os.Getenv("RLS_PUBLIC_URL"),
+		PublicURL:         dashboardURL,
 	}
 	if v, ok := os.LookupEnv("RLS_NOTIF_QUEUE_SIZE"); ok && v != "" {
 		n, err := strconv.ParseInt(v, 10, 64)
@@ -121,6 +127,7 @@ func configFromEnv() (*Config, error) {
 	return &Config{
 		Port:              port,
 		DBPath:            dbPath,
+		DashboardURL:      dashboardURL,
 		JWTSecret:         secret,
 		RetentionDays:     retention,
 		PruneTickSecond:   pruneTick,
@@ -178,7 +185,7 @@ func main() {
 
 	// cfg.Notifier travels as the env fallback so the GET settings view can
 	// mask "what would actually send" (DB row first, env after).
-	srv := api.New(st, cfg.JWTSecret, broker, notifier, cfg.Notifier)
+	srv := api.New(st, cfg.JWTSecret, broker, notifier, cfg.Notifier, api.PublicConfig{DashboardURL: cfg.DashboardURL})
 
 	// Offline ticker (REQ-015/REQ-041): sweeps agents too quiet for
 	// 3 × their interval, marks them offline and fires the alert. It stops

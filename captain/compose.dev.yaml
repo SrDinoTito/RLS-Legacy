@@ -1,0 +1,12 @@
+# Extensión para desarrollo local: compila las imágenes desde el código.
+# Uso: docker compose -f compose.yaml -f compose.dev.yaml up -d --build
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/frontend.Dockerfile

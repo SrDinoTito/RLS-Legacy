@@ -162,6 +162,12 @@ func TestE2E_AuthAndUsersFlow(t *testing.T) {
 		t.Fatalf("healthz: got %d %s", r.status, r.body)
 	}
 
+	// A clean install must signal that the first admin still needs setup.
+	r = do(t, nil, http.MethodGet, base+"/api/v1/auth/bootstrap/status", "")
+	if r.status != 200 || !strings.Contains(r.body, `"required":true`) {
+		t.Fatalf("bootstrap status before first user: got %d %s", r.status, r.body)
+	}
+
 	// 2. Bootstrap: empty DB → creates first admin (201) + session cookie.
 	jar := clientFor()
 	r = do(t, jar, http.MethodPost, base+"/api/v1/auth/bootstrap",
@@ -174,6 +180,10 @@ func TestE2E_AuthAndUsersFlow(t *testing.T) {
 	}
 	if !setSessionCookieIn(r.header) {
 		t.Fatalf("bootstrap did not set session cookie: %v", r.header)
+	}
+	r = do(t, nil, http.MethodGet, base+"/api/v1/auth/bootstrap/status", "")
+	if r.status != 200 || !strings.Contains(r.body, `"required":false`) {
+		t.Fatalf("bootstrap status after first user: got %d %s", r.status, r.body)
 	}
 
 	// 3. Second bootstrap is forbidden now that users exist.

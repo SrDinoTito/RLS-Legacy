@@ -1,0 +1,49 @@
+# Entorno de prueba aislado: base SQLite nueva y una VPS Linux efímera.
+# No usar en producción. Componer junto con compose.yaml y compose.dev.yaml.
+services:
+  backend:
+    volumes:
+      - ./smoke/data:/data
+
+  vps-engine:
+    image: docker:29-dind
+    privileged: true
+    environment:
+      DOCKER_TLS_CERTDIR: ""
+    volumes:
+      - vps-smoke-engine-data:/var/lib/docker
+    network_mode: service:frontend
+    depends_on:
+      frontend:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "docker", "info"]
+      interval: 5s
+      timeout: 4s
+      retries: 30
+      start_period: 5s
+
+  vps-systemd:
+    build:
+      context: .
+      dockerfile: docker/vps-smoke.Dockerfile
+    privileged: true
+    cgroup: host
+    security_opt:
+      - seccomp:unconfined
+    environment:
+      container: docker
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    tmpfs:
+      - /run
+      - /run/lock
+      - /tmp
+    depends_on:
+      frontend:
+        condition: service_started
+      vps-engine:
+        condition: service_healthy
+
+volumes:
+  vps-smoke-engine-data:

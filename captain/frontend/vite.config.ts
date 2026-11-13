@@ -13,14 +13,14 @@ export default defineConfig({
 					filename.split(/[/\\]/).includes('node_modules') ? undefined : true
 			},
 
-			// DSG-002 (REQ-020): SPA estática servida por nginx; fallback de client-side routing.
+			// DSG-002 (REQ-020): SPA estática servida por Bun con fallback de client-side routing.
 			adapter: adapter({
 				fallback: 'index.html'
 			})
 		})
 	],
 
-	// Dev: proxy de /api al backend Go en 8080 (en producción lo hace nginx).
+	// Dev: proxy de /api al backend Go en 8080 (en producción lo hace server.ts con Bun).
 	server: {
 		proxy: {
 			'/api': {

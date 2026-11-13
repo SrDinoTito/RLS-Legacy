@@ -1,0 +1,65 @@
+# Dokploy: configura el dominio sobre frontend, puerto interno 3008.
+# No se publican puertos del host; el backend queda solo en la red del proyecto.
+name: rls-legacy
+
+services:
+  backend:
+    image: ghcr.io/srdinotito/rls-legacy-backend:latest
+    pull_policy: always
+    environment:
+      RLS_DB_PATH: /data/rls.db
+      RLS_PORT: "8070"
+      RLS_JWT_SECRET: ${RLS_JWT_SECRET:?Configura RLS_JWT_SECRET en Dokploy}
+      RLS_PUBLIC_URL: ${RLS_PUBLIC_URL:?Configura RLS_PUBLIC_URL en Dokploy}
+      RLS_RETENTION_DAYS: ${RLS_RETENTION_DAYS:-7}
+      RLS_OFFLINE_TICK_SEC: ${RLS_OFFLINE_TICK_SEC:-10}
+      RLS_NOTIF_DISCORD_WEBHOOK_URL: ${RLS_NOTIF_DISCORD_WEBHOOK_URL:-}
+      RLS_NOTIF_TELEGRAM_BOT_TOKEN: ${RLS_NOTIF_TELEGRAM_BOT_TOKEN:-}
+      RLS_NOTIF_TELEGRAM_CHAT_ID: ${RLS_NOTIF_TELEGRAM_CHAT_ID:-}
+    volumes:
+      - rls-data:/data
+    expose:
+      - "8070"
+    restart: unless-stopped
+    mem_limit: 128m
+    cpus: 0.50
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8070/healthz || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  frontend:
+    image: ghcr.io/srdinotito/rls-legacy-frontend:latest
+    pull_policy: always
+    environment:
+      PORT: "3008"
+      BACKEND_URL: http://backend:8070
+    expose:
+      - "3008"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    mem_limit: 128m
+    cpus: 0.25
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+    healthcheck:
+      test: ["CMD", "bun", "-e", "fetch('http://127.0.0.1:3008/healthz').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  rls-data:

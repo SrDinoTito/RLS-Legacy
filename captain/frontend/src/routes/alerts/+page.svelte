@@ -9,6 +9,7 @@
 	import { Button } from '#lib/components/ui/button/index.js';
 	import { Tabs } from '#lib/components/ui/tabs/index.js';
 	import { Badge } from '#lib/components/ui/badge/index.js';
+	import PaginationControls from '#lib/components/PaginationControls.svelte';
 	import {
 		Table,
 		TableCell,
@@ -27,7 +28,11 @@
 	let scope = $state<Scope>('active');
 	let alerts = $state<NormalizedAlert[]>([]);
 	let loading = $state(false);
+	const pageSize = 10;
+	let currentPage = $state(0);
+	let previousScope: Scope | null = null;
 	const openAlerts = $derived(alerts.filter((alert) => !alert.resolved_at));
+	const pageAlerts = $derived(alerts.slice(currentPage * pageSize, (currentPage + 1) * pageSize));
 	const openByType = $derived.by(() => ({
 		offline: openAlerts.filter((alert) => alert.type === 'offline').length,
 		high_cpu: openAlerts.filter((alert) => alert.type === 'high_cpu').length,
@@ -36,7 +41,10 @@
 
 	// deps: scope (cambio de tab) + eventTick (SSE alert_new/alert_resolved)
 	$effect(() => {
-		void scope;
+		if (scope !== previousScope) {
+			previousScope = scope;
+			currentPage = 0;
+		}
 		void sse.eventTick;
 		void refreshAlerts(); // sanea el badge global sin duplicar el conteo del store
 		void load();
@@ -152,7 +160,7 @@
 			</TableRow>
 		</thead>
 		<tbody>
-			{#each alerts as alert (alert.id)}
+			{#each pageAlerts as alert (alert.id)}
 				<TableRow>
 					<TableCell>
 						<Badge variant={alert.resolved_at ? 'outline' : 'destructive'}>
@@ -199,4 +207,5 @@
 			{/each}
 		</tbody>
 	</Table>
+	<PaginationControls bind:page={currentPage} {pageSize} total={alerts.length} itemLabel="alertas" />
 </div>
