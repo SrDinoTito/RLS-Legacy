@@ -14,6 +14,7 @@ export type VPSGroup<T extends VPSAgent> = {
 	agents: T[];
 	onlineCount: number;
 	offlineCount: number;
+	missingCount: number;
 	alertCount: number;
 	ignoredCount: number;
 };
@@ -47,7 +48,8 @@ export function groupAgentsByVPS<T extends VPSAgent>(agents: T[]): VPSGroup<T>[]
 				name: nameCounts.get(name)! > 1 ? `${name} · ${key.slice(-6)}` : name,
 				agents: members,
 				onlineCount: monitored.filter((agent) => agent.status === 'online').length,
-				offlineCount: monitored.filter((agent) => agent.status !== 'online').length,
+				offlineCount: monitored.filter((agent) => agent.status === 'offline').length,
+				missingCount: monitored.filter((agent) => agent.status === 'missing').length,
 				alertCount: monitored.reduce((sum, agent) => sum + (agent.alert_count ?? 0), 0),
 				ignoredCount: members.length - monitored.length
 			};

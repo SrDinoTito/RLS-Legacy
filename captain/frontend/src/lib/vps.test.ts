@@ -6,10 +6,11 @@ describe('VPS grouping', () => {
 		const groups = groupAgentsByVPS([
 			{ id: 1, hostname: 'node-a', status: 'online', alert_count: 2 },
 			{ id: 2, hostname: 'node-a', status: 'offline', alert_count: 1 },
+			{ id: 4, hostname: 'node-a', status: 'missing', alert_count: 1 },
 			{ id: 3, hostname: 'node-b', status: 'online', alert_count: 0 }
 		]);
 		expect(groups.map((group) => group.name)).toEqual(['node-a', 'node-b']);
-		expect(groups[0]).toMatchObject({ onlineCount: 1, offlineCount: 1, alertCount: 3 });
+		expect(groups[0]).toMatchObject({ onlineCount: 1, offlineCount: 1, missingCount: 1, alertCount: 4 });
 		expect(agentBelongsToVPS({ hostname: 'node-a', status: 'online' }, 'node-a')).toBe(true);
 	});
 
@@ -35,8 +36,8 @@ describe('VPS grouping', () => {
 	it('keeps ignored containers in the VPS inventory but excludes them from monitoring counters', () => {
 		const groups = groupAgentsByVPS([
 			{ hostname: 'node-a', labels: { rls_vps_id: 'engine-a' }, status: 'online', alert_count: 2 },
-			{ hostname: 'node-a', labels: { rls_vps_id: 'engine-a' }, status: 'offline', alert_count: 1, monitoring_ignored: true }
+			{ hostname: 'node-a', labels: { rls_vps_id: 'engine-a' }, status: 'missing', alert_count: 1, monitoring_ignored: true }
 		]);
-		expect(groups[0]).toMatchObject({ agents: expect.any(Array), onlineCount: 1, offlineCount: 0, alertCount: 2, ignoredCount: 1 });
+		expect(groups[0]).toMatchObject({ agents: expect.any(Array), onlineCount: 1, offlineCount: 0, missingCount: 0, alertCount: 2, ignoredCount: 1 });
 	});
 });

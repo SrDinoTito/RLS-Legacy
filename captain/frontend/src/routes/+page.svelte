@@ -48,7 +48,7 @@
 	type ViewMode = 'lista' | 'cards';
 
 	/** Filtro de flota: operativos, offline o inventario ignorado. */
-	let filter = $state<'todo' | 'offline' | 'ignored'>('todo');
+	let filter = $state<'todo' | 'offline' | 'missing' | 'ignored'>('todo');
 
 	/** View switch (refactor): 'rls.view' con default "lista". */
 	let view = $state<ViewMode>(readView());
@@ -110,13 +110,15 @@
 		if (filter === 'ignored') return [];
 		let list = agents;
 		if (tagFilter.length > 0) list = list.filter((a) => allAgentTags(a).some((t) => tagFilter.includes(t)));
-		if (filter === 'offline') list = list.filter((a) => a.status !== 'online');
+		if (filter === 'offline') list = list.filter((a) => a.status === 'offline');
+		if (filter === 'missing') list = list.filter((a) => a.status === 'missing');
 		return list;
 	});
 	/** Ignoradas visibles en Todos, nunca se mezclan con el filtro operativo offline. */
 	const filteredIgnored = $derived.by(() => {
 		if (filter === 'offline') return [];
 		let list = ignoredAgents;
+		if (filter === 'missing') list = list.filter((agent) => agent.status === 'missing');
 		if (tagFilter.length > 0) list = list.filter((agent) => allAgentTags(agent).some((tag) => tagFilter.includes(tag)));
 		return list;
 	});
@@ -143,8 +145,9 @@
 	$effect(() => {
 		if (currentPage >= pageCount) currentPage = Math.max(0, pageCount - 1);
 	});
-	const offlineCount = $derived(agents.filter((a) => a.status !== 'online').length);
-	const onlineCount = $derived(agents.length - offlineCount);
+	const offlineCount = $derived(agents.filter((a) => a.status === 'offline').length);
+	const missingCount = $derived(agents.filter((a) => a.status === 'missing').length);
+	const onlineCount = $derived(agents.filter((a) => a.status === 'online').length);
 
 	const isAdmin = $derived(auth.user?.role === 'admin');
 
@@ -225,6 +228,10 @@
 					<strong class="hero-stat-value is-offline">{offlineCount.toString().padStart(2, '0')}</strong>
 				</div>
 				<div class="hero-stat">
+					<span class="hero-stat-label">Missing</span>
+					<strong class="hero-stat-value is-missing">{missingCount.toString().padStart(2, '0')}</strong>
+				</div>
+				<div class="hero-stat">
 					<span class="hero-stat-label">Alertas abiertas</span>
 					<strong class="hero-stat-value is-alert">{sse.activeAlerts.toString().padStart(2, '0')}</strong>
 				</div>
@@ -292,7 +299,8 @@
 				class="tabular-nums"
 				options={[
 				{ value: 'todo', label: `Todos (${agents.length + ignoredAgents.length})` },
-					{ value: 'offline', label: `Solo offline (${offlineCount})` },
+					{ value: 'offline', label: `Sin señal (${offlineCount})` },
+					{ value: 'missing', label: `Missing (${missingCount})` },
 					{ value: 'ignored', label: `Ignorados (${ignoredAgents.length})` }
 				]}
 				bind:value={filter}
@@ -443,7 +451,9 @@
 			</thead>
 			<tbody>
 				{#each pageAgents as agent (agent.id)}
-					{@const offline = agent.status !== 'online'}
+					{@const missing = agent.status === 'missing'}
+					{@const offline = agent.status === 'offline'}
+					{@const unavailable = offline || missing}
 					{@const ramPct =
 						agent.metrics?.ram_used_mb != null && agent.metrics.ram_limit_mb != null && agent.metrics.ram_limit_mb > 0
 							? (agent.metrics.ram_used_mb / agent.metrics.ram_limit_mb) * 100
@@ -455,7 +465,7 @@
 					<TableRow
 						role="button"
 						tabindex={0}
-						class="cursor-pointer {offline ? 'text-muted-foreground' : ''}"
+						class="cursor-pointer {unavailable ? 'text-muted-foreground' : ''}"
 						onclick={() => openDetails(agent)}
 						onkeydown={(e) => {
 							if (e.key === 'Enter' || e.key === ' ') {
@@ -467,19 +477,21 @@
 						<TableCell>
 							<span class="flex items-center gap-2 whitespace-nowrap">
 								<span
-									class="inline-block h-2 w-2 shrink-0 rounded-full {offline
-										? 'bg-destructive shadow-[0_0_6px_hsl(8_80%_55%/0.5)]'
-										: 'bg-primary shadow-[0_0_6px_hsl(42_85%_52%/0.4)]'}"
+									class="inline-block h-2 w-2 shrink-0 rounded-full {missing
+										? 'bg-muted-foreground'
+										: offline
+											? 'bg-destructive shadow-[0_0_6px_hsl(8_80%_55%/0.5)]'
+											: 'bg-primary shadow-[0_0_6px_hsl(42_85%_52%/0.4)]'}"
 									aria-hidden="true"
 								></span>
-								<span class="text-[11px] tracking-wider {offline ? '' : 'text-foreground'}">
-									{offline ? 'OFFLINE' : 'ONLINE'}
+								<span class="text-[11px] tracking-wider {unavailable ? '' : 'text-foreground'}">
+					{missing ? 'MISSING' : offline ? 'OFFLINE' : 'ONLINE'}
 								</span>
 							</span>
 						</TableCell>
 						<TableCell class="max-w-[220px]">
 							<p class="truncate font-medium">{agent.name}</p>
-							<p class="truncate text-[12px] text-muted-foreground">{agent.hostname}</p>
+							<p class="truncate text-[12px] text-muted-foreground">{agent.hostname}{agent.container_id ? ` · ${agent.container_id.slice(0, 12)}` : ''}</p>
 						</TableCell>
 						<TableCell>
 							{#if agent.tags && agent.tags.length > 0}
@@ -565,8 +577,10 @@
 								<p class="py-8 text-center text-sm text-muted-foreground">
 									{#if tagFilter.length > 0}
 										Ningún agent con los tags seleccionados — probá con otros chips.
-									{:else if filter === 'offline'}
-										Ningún agent está offline — buen trópico.
+					{:else if filter === 'offline'}
+						Ningún contenedor está sin señal.
+					{:else if filter === 'missing'}
+						No containers are missing from inventory.
 									{:else if filter === 'ignored'}
 										No hay contenedores ignorados.
 									{/if}
@@ -678,7 +692,9 @@
 						{#if tagFilter.length > 0}
 							Ningún agent con los tags seleccionados — probá con otros chips.
 						{:else if filter === 'offline'}
-							Ningún agent está offline — buen trópico.
+							Ningún contenedor está sin señal.
+						{:else if filter === 'missing'}
+							No containers are missing from inventory.
 						{:else if filter === 'ignored'}
 							No hay contenedores ignorados.
 						{/if}

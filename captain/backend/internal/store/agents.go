@@ -596,6 +596,159 @@ func (s *Store) AgentByName(ctx context.Context, name string) (*Agent, error) {
 		 FROM agents WHERE name = ? ORDER BY id ASC LIMIT 1`, name))
 }
 
+// AgentByContainerID resolves a Docker-backed agent by the immutable ID of a
+// concrete container instance. VPS-scoped Stowaway tokens use this identity
+// so a replacement container does not overwrite the historical record of
+// the container that was removed.
+func (s *Store) AgentByContainerID(ctx context.Context, containerID string) (*Agent, error) {
+	return scanAgent(s.db.QueryRowContext(ctx,
+		`SELECT `+agentColumns+`
+		 FROM agents WHERE container_id = ? ORDER BY id DESC LIMIT 1`, containerID))
+}
+
+// InventoryTransition describes one lifecycle change caused by a complete
+// Docker Engine inventory snapshot. Alert writes are committed atomically
+// with the status transition; API/SSE/webhook side effects happen afterwards.
+type InventoryTransition struct {
+	Agent           Agent
+	PreviousStatus  string
+	Status          string
+	NewAlert        *Alert
+	ResolvedOffline int64
+	ResolvedMissing int64
+}
+
+// ReconcileContainerInventory records whether each previously discovered
+// container still exists in Docker. Missing containers remain in agents and
+// keep their metrics/alert history; only their status changes. A present
+// container without a successful heartbeat returns to offline until its next
+// beat. Inventory is scoped to one active VPS token.
+func (s *Store) ReconcileContainerInventory(ctx context.Context, tokenID int64, inventory map[string]struct{}, nowSec int64) ([]InventoryTransition, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("begin container inventory reconciliation: %w", err)
+	}
+	defer tx.Rollback()
+
+	rows, err := tx.QueryContext(ctx,
+		`SELECT `+agentColumns+` FROM agents
+		 WHERE token_id = ? AND container_id IS NOT NULL
+		 ORDER BY id ASC`, tokenID)
+	if err != nil {
+		return nil, fmt.Errorf("read agents for VPS token %d: %w", tokenID, err)
+	}
+	var agents []Agent
+	for rows.Next() {
+		agent, scanErr := scanAgent(rows)
+		if scanErr != nil {
+			rows.Close()
+			return nil, scanErr
+		}
+		agents = append(agents, *agent)
+	}
+	if err = rows.Err(); err != nil {
+		rows.Close()
+		return nil, fmt.Errorf("iterate agents for VPS token %d: %w", tokenID, err)
+	}
+	if err = rows.Close(); err != nil {
+		return nil, fmt.Errorf("close agents for VPS token %d: %w", tokenID, err)
+	}
+
+	changes := make([]InventoryTransition, 0)
+	for _, agent := range agents {
+		if agent.DismissedAt.Valid {
+			continue
+		}
+		_, present := inventory[agent.ContainerID.String]
+		if (present && agent.Status != "missing") || (!present && agent.Status == "missing") {
+			continue
+		}
+		change := InventoryTransition{Agent: agent, PreviousStatus: agent.Status}
+		if present {
+			// The inventory includes stopped containers too. A container that
+			// has returned but has not successfully heartbeated is offline, not
+			// online; a successful running heartbeat already updated this row.
+			change.Status = "offline"
+			if _, err = tx.ExecContext(ctx, `UPDATE agents SET status = 'offline' WHERE id = ?`, agent.ID); err != nil {
+				return nil, fmt.Errorf("restore present container %d: %w", agent.ID, err)
+			}
+			change.ResolvedMissing, err = resolveInventoryAlerts(ctx, tx, agent.ID, "container_missing", nowSec)
+			if err != nil {
+				return nil, err
+			}
+			if !agent.MonitoringIgnored {
+				change.NewAlert, err = fireInventoryAlert(ctx, tx, agent.ID, "offline", float64(nowSec-int64(agent.LastSeen)), nowSec,
+					"contenedor presente en Docker, pero sin un reporte reciente")
+				if err != nil {
+					return nil, err
+				}
+			}
+		} else {
+			change.Status = "missing"
+			if _, err = tx.ExecContext(ctx, `UPDATE agents SET status = 'missing' WHERE id = ?`, agent.ID); err != nil {
+				return nil, fmt.Errorf("mark container %d missing: %w", agent.ID, err)
+			}
+			// Once Docker confirms removal, the more specific missing
+			// condition replaces any prior generic silence alert.
+			change.ResolvedOffline, err = resolveInventoryAlerts(ctx, tx, agent.ID, "offline", nowSec)
+			if err != nil {
+				return nil, err
+			}
+			if !agent.MonitoringIgnored {
+				change.NewAlert, err = fireInventoryAlert(ctx, tx, agent.ID, "container_missing", 0, nowSec,
+					"the container is no longer present in this VPS Docker inventory")
+				if err != nil {
+					return nil, err
+				}
+			}
+		}
+		changes = append(changes, change)
+	}
+	if err = tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit container inventory reconciliation: %w", err)
+	}
+	return changes, nil
+}
+
+func resolveInventoryAlerts(ctx context.Context, tx *sql.Tx, agentID int64, typ string, nowSec int64) (int64, error) {
+	result, err := tx.ExecContext(ctx,
+		`UPDATE alerts SET resolved_at = ? WHERE agent_id = ? AND type = ? AND resolved_at IS NULL`,
+		nowSec, agentID, typ)
+	if err != nil {
+		return 0, fmt.Errorf("resolve %s alerts for agent %d: %w", typ, agentID, err)
+	}
+	n, err := result.RowsAffected()
+	return n, err
+}
+
+func fireInventoryAlert(ctx context.Context, tx *sql.Tx, agentID int64, typ string, value float64, nowSec int64, message string) (*Alert, error) {
+	var open int64
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM alerts WHERE agent_id = ? AND type = ? AND resolved_at IS NULL`,
+		agentID, typ).Scan(&open); err != nil {
+		return nil, fmt.Errorf("count open %s alerts for agent %d: %w", typ, agentID, err)
+	}
+	if open > 0 {
+		return nil, nil
+	}
+	alert := &Alert{AgentID: agentID, Type: typ, Message: sql.NullString{String: message, Valid: true}, FiredAt: nowSec}
+	if typ == "offline" {
+		alert.Value = sql.NullFloat64{Float64: value, Valid: true}
+	}
+	result, err := tx.ExecContext(ctx,
+		`INSERT INTO alerts (agent_id, type, value, message, fired_at, resolved_at)
+		 VALUES (?, ?, ?, ?, ?, NULL)`,
+		alert.AgentID, alert.Type, alert.Value, alert.Message, alert.FiredAt)
+	if err != nil {
+		return nil, fmt.Errorf("insert %s alert for agent %d: %w", typ, agentID, err)
+	}
+	alert.ID, err = result.LastInsertId()
+	if err != nil {
+		return nil, fmt.Errorf("read inserted alert id: %w", err)
+	}
+	return alert, nil
+}
+
 // CreateEnrollmentAgent inserts the auto-registered agent of an ENROLLMENT
 // token's first heartbeat: 1:N model, so token_hash stays NULL (many
 // agents share one token) and the link rides on agents.token_id. tagsJSON

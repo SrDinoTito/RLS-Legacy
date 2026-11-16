@@ -14,7 +14,8 @@
 	const agents = $derived(sse.list());
 	const taggedAgents = $derived.by(() => filterAgentsByTag(agents, tag));
 	const onlineCount = $derived(taggedAgents.filter((agent) => agent.status === 'online').length);
-	const offlineCount = $derived(taggedAgents.length - onlineCount);
+	const offlineCount = $derived(taggedAgents.filter((agent) => agent.status === 'offline').length);
+	const missingCount = $derived(taggedAgents.filter((agent) => agent.status === 'missing').length);
 	const alertCount = $derived(taggedAgents.reduce((sum, agent) => sum + (agent.alert_count ?? 0), 0));
 	const waitingForFleet = $derived(agents.length === 0 && (sse.loading || sse.status !== 'live'));
 </script>
@@ -57,6 +58,10 @@
 		<Card class="tag-profile-stat tag-profile-stat--offline">
 			<span>Sin señal</span>
 			<strong>{offlineCount.toString().padStart(2, '0')}</strong>
+		</Card>
+		<Card class="tag-profile-stat tag-profile-stat--missing">
+			<span>Missing in Docker</span>
+			<strong>{missingCount.toString().padStart(2, '0')}</strong>
 		</Card>
 		<Card class="tag-profile-stat tag-profile-stat--alerts">
 			<span>Alertas abiertas</span>

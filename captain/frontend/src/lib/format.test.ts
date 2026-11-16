@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { fmtAlertMessage, fmtAlertReading } from './format';
+import { alertTypeLabel, fmtAlertMessage, fmtAlertReading } from './format';
 
 describe('fmtAlertReading', () => {
 	it('muestra las lecturas de CPU y RAM como porcentaje', () => {
@@ -14,6 +14,13 @@ describe('fmtAlertReading', () => {
 	it('protege lecturas nulas o corruptas', () => {
 		expect(fmtAlertReading('high_cpu', null)).toBe('—');
 		expect(fmtAlertReading('offline', Number.NaN)).toBe('—');
+	});
+});
+
+describe('alertTypeLabel', () => {
+	 it('identifica por separado una instancia eliminada del contenedor sin señal', () => {
+		expect(alertTypeLabel('container_missing')).toBe('CONTAINER MISSING');
+		expect(alertTypeLabel('offline')).toBe('OFFLINE');
 	});
 });
 

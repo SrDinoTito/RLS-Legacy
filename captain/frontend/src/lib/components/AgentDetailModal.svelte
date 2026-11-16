@@ -54,7 +54,9 @@
 		{ value: 'history', label: 'Historial y eventos' }
 	];
 
-	const offline = $derived(agent.status !== 'online');
+	const missing = $derived(agent.status === 'missing');
+	const offline = $derived(agent.status === 'offline');
+	const unavailable = $derived(offline || missing);
 	const ignored = $derived(agent.monitoring_ignored);
 	const isAdmin = $derived(auth.user?.role === 'admin');
 	const nowSecs = $state(Math.floor(Date.now() / 1000));
@@ -210,7 +212,7 @@
 
 <Dialog
 	bind:open
-	title={offline ? `${agent.name} — OFFLINE` : agent.name}
+	title={missing ? `${agent.name} — MISSING IN DOCKER` : offline ? `${agent.name} — OFFLINE` : agent.name}
 	contentClass="w-[min(96vw,1120px)] h-[84vh] max-h-[900px]"
 >
 	{#if open}
@@ -220,8 +222,8 @@
 					<div class="min-w-0">
 						<p class="agent-detail-host">{agent.hostname}{#if agent.container_id} · <span title={agent.container_id}>{agent.container_id.slice(0, 12)}</span>{/if}</p>
 						<div class="mt-2 flex flex-wrap items-center gap-2">
-							{#if ignored}<Badge variant="outline">IGNORADO</Badge>{:else if offline}<Badge variant="destructive">OFFLINE</Badge>{:else}<Badge variant="default">ONLINE</Badge>{/if}
-							<span class="text-xs text-muted-foreground">{ignored ? 'Monitoreo pausado' : `Visto ${fmtAgo(agent.last_seen, nowSecs)} · intervalo ${agent.interval}s`}</span>
+							{#if ignored}<Badge variant="outline">IGNORADO</Badge>{:else if missing}<Badge variant="outline">MISSING IN DOCKER</Badge>{:else if offline}<Badge variant="destructive">OFFLINE</Badge>{:else}<Badge variant="default">ONLINE</Badge>{/if}
+							<span class="text-xs text-muted-foreground">{ignored ? 'Monitoreo pausado' : missing ? 'Docker Engine no longer reports this container' : `Visto ${fmtAgo(agent.last_seen, nowSecs)} · intervalo ${agent.interval}s`}</span>
 						</div>
 					</div>
 					<Tabs class="agent-detail-tabs" options={PANEL_OPTIONS} bind:value={panel} />
@@ -239,7 +241,7 @@
 					<div class="agent-overview-grid">
 						<section class="agent-panel-card agent-metrics-panel">
 							<header class="agent-panel-heading"><div><p class="agent-panel-eyebrow">Estado actual</p><h3>Métricas</h3></div><span class="text-xs text-muted-foreground">{ignored ? 'Últimos datos guardados' : offline ? 'Última muestra' : 'En tiempo real'}</span></header>
-							<AgentMetrics agent={agent} muted={offline || ignored} />
+							<AgentMetrics agent={agent} muted={unavailable || ignored} />
 						</section>
 
 						{#if !ignored}

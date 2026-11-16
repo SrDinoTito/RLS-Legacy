@@ -35,7 +35,8 @@
 	const groupName = $derived(group?.name ?? (key === UNKNOWN_VPS_KEY ? 'Sin hostname' : key));
 	const isAdmin = $derived(auth.user?.role === 'admin');
 	const onlineCount = $derived(monitoredAgents.filter((agent) => agent.status === 'online').length);
-	const offlineCount = $derived(monitoredAgents.length - onlineCount);
+	const offlineCount = $derived(monitoredAgents.filter((agent) => agent.status === 'offline').length);
+	const missingCount = $derived(monitoredAgents.filter((agent) => agent.status === 'missing').length);
 	const alertCount = $derived(monitoredAgents.reduce((total, agent) => total + (agent.alert_count ?? 0), 0));
 	const tagCounts = $derived.by(() => {
 		const counts = new Map<string, number>();
@@ -115,6 +116,7 @@
 		<Card class="vps-profile-stat"><span>En monitoreo</span><strong>{monitoredAgents.length.toString().padStart(2, '0')}</strong></Card>
 		<Card class="vps-profile-stat vps-profile-stat--online"><span>En línea</span><strong>{onlineCount.toString().padStart(2, '0')}</strong></Card>
 		<Card class="vps-profile-stat vps-profile-stat--offline"><span>Sin señal</span><strong>{offlineCount.toString().padStart(2, '0')}</strong></Card>
+		<Card class="vps-profile-stat vps-profile-stat--missing"><span>Missing</span><strong>{missingCount.toString().padStart(2, '0')}</strong></Card>
 		<Card class="vps-profile-stat vps-profile-stat--alerts"><span>Alertas abiertas</span><strong>{alertCount.toString().padStart(2, '0')}</strong></Card>
 		{#if isAdmin}<Card class="vps-profile-stat"><span>Ignorados</span><strong>{ignoredAgents.length.toString().padStart(2, '0')}</strong></Card>{/if}
 	</section>
@@ -160,8 +162,8 @@
 							<TableRow class={ignored ? 'ignored-fleet-row' : ''}>
 								<TableCell>
 									<span class="flex items-center gap-2 whitespace-nowrap">
-										<span class="status-dot {ignored ? '' : agent.status === 'online' ? 'status-dot--online' : 'status-dot--offline'}" aria-hidden="true"></span>
-										<span>{ignored ? 'IGNORADO' : agent.status === 'online' ? 'ONLINE' : 'OFFLINE'}</span>
+										<span class="status-dot {ignored ? '' : agent.status === 'missing' ? 'status-dot--missing' : agent.status === 'online' ? 'status-dot--online' : 'status-dot--offline'}" aria-hidden="true"></span>
+										<span>{ignored ? 'IGNORADO' : agent.status === 'missing' ? 'MISSING' : agent.status === 'online' ? 'ONLINE' : 'OFFLINE'}</span>
 									</span>
 								</TableCell>
 								<TableCell class="max-w-[250px]">

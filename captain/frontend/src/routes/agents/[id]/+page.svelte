@@ -179,7 +179,9 @@
 				<h1 class="page-title">
 					{agent?.name ?? `Agent #${idNum}`}
 				</h1>
-				{#if agent?.status !== 'online'}
+				{#if agent?.status === 'missing'}
+					<Badge variant="outline">MISSING IN DOCKER</Badge>
+				{:else if agent?.status === 'offline'}
 					<Badge variant="destructive">OFFLINE</Badge>
 				{:else}
 					<Badge variant="default">ONLINE</Badge>

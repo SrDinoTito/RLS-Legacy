@@ -96,6 +96,7 @@ func (s *Server) Handler() http.Handler {
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireAgentToken)
 			r.Post("/agents/heartbeat", s.handleHeartbeat)
+			r.Post("/agents/inventory", s.handleContainerInventory)
 		})
 
 		// Authenticated endpoints (valid cookie JWT required).

@@ -229,6 +229,9 @@ func TestE2E_TokenTagsEcosystem(t *testing.T) {
 	}
 	v2 := *created2.Token
 	differentBeat := strings.Replace(validBeat(), "nginx-prod", "nginx-canary", 1)
+	// This models a different VPS/container instance. Stowaway keys history by
+	// immutable Docker ID, not its friendly name, so this gets a distinct row.
+	differentBeat = strings.Replace(differentBeat, `"container_id": "abc123"`, `"container_id": "def456"`, 1)
 	differentBeat = strings.Replace(differentBeat, strconv.FormatInt(validBeatTS, 10), strconv.FormatInt(validBeatTS+120_000, 10), 1)
 	if b := beat(t, srv, v2, withVPSID(differentBeat, "engine-task11-v2")); b.status != http.StatusOK {
 		t.Fatalf("v2 first beat: %d %s", b.status, b.body)

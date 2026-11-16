@@ -140,11 +140,17 @@ function onSseAgentStatus(data: SseHeartbeatPayload, cameOnline: boolean): void 
 	if (existing) {
 		agents.set(data.agent_id, { ...existing, name: data.name, status: data.status });
 	}
-	if (!cameOnline) {
+	if (!cameOnline && !existing?.monitoring_ignored) {
 		// toast sutil de caída (REQ-023): warning corto, sin agresividad
-		toast.warning(`${data.name || 'Agent'} sin señal`, {
-			description: 'OFFLINE — sin heartbeat reciente.'
-		});
+		if (data.status === 'missing') {
+			toast.warning(`${data.name || 'Container'} is missing from Docker`, {
+				description: 'CONTAINER MISSING — the VPS inventory confirmed it is no longer present.'
+			});
+		} else {
+			toast.warning(`${data.name || 'Agent'} sin señal`, {
+				description: 'OFFLINE — sin heartbeat reciente.'
+			});
+		}
 	}
 	scheduleRefetch();
 	tick();
@@ -245,6 +251,9 @@ export function connect(): void {
 
 	es.addEventListener('heartbeat', (e) => handleEvent(e as MessageEvent, onSseHeartbeat));
 	es.addEventListener('agent_offline', (e) =>
+		handleEvent<SseHeartbeatPayload>(e as MessageEvent, (d) => onSseAgentStatus(d, false))
+	);
+	es.addEventListener('agent_missing', (e) =>
 		handleEvent<SseHeartbeatPayload>(e as MessageEvent, (d) => onSseAgentStatus(d, false))
 	);
 	es.addEventListener('agent_online', (e) =>

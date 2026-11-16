@@ -131,7 +131,9 @@ func (d *DockerClient) Containers(ctx context.Context) ([]ContainerSummary, erro
 		return nil, err
 	}
 	var containers []ContainerSummary
-	if err := d.getJSON(ctx, "/v"+version+"/containers/json?all=0", &containers); err != nil {
+	// Include stopped containers so the server can distinguish a container
+	// that still exists but is stopped from one that was removed from Docker.
+	if err := d.getJSON(ctx, "/v"+version+"/containers/json?all=1", &containers); err != nil {
 		return nil, err
 	}
 	return containers, nil

@@ -50,5 +50,5 @@ ENTRYPOINT ["/srv/server"]
 
 LABEL org.opencontainers.image.title="rls-captain-backend" \
       org.opencontainers.image.description="Backend Go + Chi + SQLite del dashboard RLS Legacy (heartbeat, offline, tokens, thresholds, alertas, SSE)." \
-      org.opencontainers.image.version="1.0.1" \
+      org.opencontainers.image.version="1.0.2" \
       org.opencontainers.image.licenses="MIT"

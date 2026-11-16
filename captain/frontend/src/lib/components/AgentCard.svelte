@@ -46,10 +46,14 @@
 		sparklineReady = true;
 	});
 
-	const offline = $derived(agent.status !== 'online');
+	const offline = $derived(agent.status === 'offline');
+	const missing = $derived(agent.status === 'missing');
+	const unavailable = $derived(offline || missing);
 	const cardClass = $derived(
 		ignored
 			? 'agent-card--ignored text-muted-foreground'
+			: missing
+			? 'agent-card--missing border-muted-foreground/35'
 			: offline
 			// glow destructive sutil y PERSISTENTE en cards OFFLINE (exigido por la calidad visual)
 			? 'agent-card--offline border-destructive/50 shadow-[0_0_14px_hsl(8_80%_55%/0.15)]'
@@ -98,6 +102,8 @@
 		</div>
 		{#if ignored}
 			<Badge variant="outline">IGNORADO</Badge>
+		{:else if missing}
+			<Badge variant="outline">MISSING</Badge>
 		{:else if offline}
 			<Badge variant="destructive">OFFLINE</Badge>
 		{:else}
@@ -112,20 +118,20 @@
 				<span>última muestra</span>
 				<span class="tabular-nums">visto {fmtAgo(agent.last_seen, nowSecs)}</span>
 			</div>
-		{:else if offline}
+		{:else if unavailable}
 			<!-- métricas atenuadas: son el ÚLTIMO beat persistido, no en vivo -->
 			<div class="flex items-center justify-between text-[10px] uppercase tracking-wider text-muted-foreground">
-				<span>últimos datos</span>
+				<span>{missing ? 'container missing' : 'últimos datos'}</span>
 				<span class="tabular-nums">visto {fmtAgo(agent.last_seen, nowSecs)}</span>
 			</div>
 		{/if}
-		<AgentMetrics agent={agent} compact muted={offline || ignored} />
+		<AgentMetrics agent={agent} compact muted={unavailable || ignored} />
 
-		<div class="grid gap-1 text-secondary" class:opacity-55={offline || ignored} aria-hidden={offline || ignored || undefined}>
+		<div class="grid gap-1 text-secondary" class:opacity-55={unavailable || ignored} aria-hidden={unavailable || ignored || undefined}>
 			<div class="flex items-center justify-between text-xs text-muted-foreground">
 				<span>{ignored ? 'CPU · histórico guardado' : 'CPU · últimas 6 h · lectura cada 5 min'}</span>
 				{#if !sparklineReady}
-					{#if offline}
+					{#if unavailable}
 						<span>cargando…</span>
 					{:else}
 						<span aria-live="polite">cargando…</span>
@@ -143,6 +149,8 @@
 			<span class="truncate">
 				{#if ignored}
 					monitoreo pausado
+				{:else if missing}
+					missing in Docker
 				{:else if offline}
 					intervalo {agent.interval}s
 				{:else}

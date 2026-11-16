@@ -25,6 +25,16 @@ type heartbeat struct {
 	Metrics     Metrics           `json:"metrics"`
 }
 
+type inventoryContainer struct {
+	ID    string `json:"id"`
+	State string `json:"state"`
+}
+
+type inventorySnapshot struct {
+	EngineID   string               `json:"engine_id"`
+	Containers []inventoryContainer `json:"containers"`
+}
+
 // Collector periodically reconciles the local Docker daemon and reports one
 // heartbeat per running container. It does not expose any inbound listener.
 type Collector struct {
@@ -32,6 +42,7 @@ type Collector struct {
 	docker    *DockerClient
 	remote    *http.Client
 	heartbeat string
+	inventory string
 	logger    *slog.Logger
 }
 
@@ -43,11 +54,16 @@ func NewCollector(config Config, logger *slog.Logger) (*Collector, error) {
 	if err != nil {
 		return nil, fmt.Errorf("build heartbeat URL: %w", err)
 	}
+	inventory, err := url.JoinPath(config.DashboardURL, "api/v1/agents/inventory")
+	if err != nil {
+		return nil, fmt.Errorf("build inventory URL: %w", err)
+	}
 	return &Collector{
 		config:    config,
 		docker:    NewDockerClient(config.DockerSocket),
 		remote:    &http.Client{Timeout: 8 * time.Second},
 		heartbeat: endpoint,
+		inventory: inventory,
 		logger:    logger,
 	}, nil
 }
@@ -77,7 +93,9 @@ func (c *Collector) collect(ctx context.Context) {
 	}
 	identityHost := c.config.Hostname
 	vpsID := c.config.Hostname
+	hasEngineID := false
 	if engineID, err := c.docker.EngineID(cycleCtx); err == nil {
+		hasEngineID = true
 		vpsID = engineID
 		if len(engineID) > 8 {
 			engineID = engineID[:8]
@@ -86,41 +104,73 @@ func (c *Collector) collect(ctx context.Context) {
 	} else {
 		c.logger.Warn("no se pudo obtener identidad de Docker; se usará hostname", "error", err)
 	}
-	if len(containers) == 0 {
-		return
-	}
-	workers := collectorWorkers
-	if len(containers) < workers {
-		workers = len(containers)
-	}
-	jobs := make(chan ContainerSummary)
-	var wg sync.WaitGroup
-	for i := 0; i < workers; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for container := range jobs {
-				if cycleCtx.Err() != nil {
-					return
-				}
-				c.reportContainer(cycleCtx, identityHost, vpsID, container)
-			}
-		}()
-	}
-
-enqueue:
+	running := make([]ContainerSummary, 0, len(containers))
 	for _, container := range containers {
-		if container.State != "running" || container.ID == "" {
+		if container.State == "running" && container.ID != "" {
+			running = append(running, container)
+		}
+	}
+	if len(running) > 0 {
+		workers := min(collectorWorkers, len(running))
+		jobs := make(chan ContainerSummary)
+		var wg sync.WaitGroup
+		for i := 0; i < workers; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for container := range jobs {
+					if cycleCtx.Err() != nil {
+						return
+					}
+					c.reportContainer(cycleCtx, identityHost, vpsID, container)
+				}
+			}()
+		}
+	enqueue:
+		for _, container := range running {
+			select {
+			case jobs <- container:
+			case <-cycleCtx.Done():
+				break enqueue
+			}
+		}
+		close(jobs)
+		wg.Wait()
+	}
+	if hasEngineID {
+		c.reportInventory(cycleCtx, vpsID, containers)
+	}
+}
+
+func (c *Collector) reportInventory(ctx context.Context, engineID string, containers []ContainerSummary) {
+	snapshot := inventorySnapshot{EngineID: engineID, Containers: make([]inventoryContainer, 0, len(containers))}
+	for _, container := range containers {
+		if container.ID == "" {
 			continue
 		}
-		select {
-		case jobs <- container:
-		case <-cycleCtx.Done():
-			break enqueue
-		}
+		snapshot.Containers = append(snapshot.Containers, inventoryContainer{ID: container.ID, State: container.State})
 	}
-	close(jobs)
-	wg.Wait()
+	body, err := json.Marshal(snapshot)
+	if err != nil {
+		c.logger.Warn("no se pudo codificar el inventario Docker", "error", err)
+		return
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.inventory, bytes.NewReader(body))
+	if err != nil {
+		c.logger.Warn("no se pudo crear el reporte de inventario", "error", err)
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+c.config.Token)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.remote.Do(req)
+	if err != nil {
+		c.logger.Warn("falló el reporte de inventario", "error", err)
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		c.logger.Warn("el dashboard rechazó el inventario", "status", resp.StatusCode)
+	}
 }
 
 func (c *Collector) reportContainer(ctx context.Context, identityHost, vpsID string, summary ContainerSummary) {

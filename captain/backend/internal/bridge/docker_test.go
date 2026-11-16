@@ -27,10 +27,10 @@ func TestDockerClientNegotiatesVersionAndReadsOnlyContainerState(t *testing.T) {
 		case "/v1.47/info":
 			_, _ = w.Write([]byte(`{"ID":"engine-xyz987"}`))
 		case "/v1.47/containers/json":
-			if r.URL.Query().Get("all") != "0" {
-				t.Errorf("expected running containers only, query=%s", r.URL.RawQuery)
+			if r.URL.Query().Get("all") != "1" {
+				t.Errorf("expected full container inventory, query=%s", r.URL.RawQuery)
 			}
-			_, _ = w.Write([]byte(`[{"Id":"abc123","Names":["/api"],"State":"running","Labels":{"com.docker.compose.service":"api"}}]`))
+			_, _ = w.Write([]byte(`[{"Id":"abc123","Names":["/api"],"State":"running","Labels":{"com.docker.compose.service":"api"}},{"Id":"def456","Names":["/cache"],"State":"exited","Labels":{}}]`))
 		case "/v1.47/containers/abc123/json":
 			_, _ = w.Write([]byte(`{"Name":"/api","Config":{"Labels":{"com.docker.compose.project":"demo"}},"HostConfig":{"Memory":67108864},"State":{"Running":true,"StartedAt":"2026-11-02T10:00:00Z"}}`))
 		case "/v1.47/containers/abc123/stats":
@@ -52,7 +52,7 @@ func TestDockerClientNegotiatesVersionAndReadsOnlyContainerState(t *testing.T) {
 		t.Fatalf("engine ID=%q err=%v", engineID, err)
 	}
 	containers, err := client.Containers(context.Background())
-	if err != nil || len(containers) != 1 || containers[0].ID != "abc123" {
+	if err != nil || len(containers) != 2 || containers[0].ID != "abc123" || containers[1].State != "exited" {
 		t.Fatalf("containers=%+v err=%v", containers, err)
 	}
 	info, err := client.Inspect(context.Background(), "abc123")

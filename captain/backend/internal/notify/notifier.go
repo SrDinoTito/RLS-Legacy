@@ -31,7 +31,7 @@ import (
 
 // notifiedTypes are the alert classes that generate notifications. Heartbeat
 // traffic and any other event kind are silently dropped.
-var notifiedTypes = map[string]bool{"offline": true, "high_cpu": true, "high_ram": true}
+var notifiedTypes = map[string]bool{"offline": true, "container_missing": true, "high_cpu": true, "high_ram": true}
 
 // Embed colors used by the Discord webhook: offline fires red, threshold
 // (high_cpu / high_ram) fires orange, and every resolution renders green
@@ -304,15 +304,19 @@ func (n *Notifier) sendWithRetry(channel string, warnOnce *sync.Once, attempt fu
 // firedPhrase is the short per-type phrase used in both Discord titles and
 // Telegram headlines ("🛰 {name} — sin comunicación" / "CPU sobre umbral").
 var firedPhrase = map[string]string{
-	"offline":  "sin comunicación",
-	"high_cpu": "CPU sobre umbral",
-	"high_ram": "RAM sobre umbral",
+	"offline":           "sin comunicación",
+	"container_missing": "container missing",
+	"high_cpu":          "CPU sobre umbral",
+	"high_ram":          "RAM sobre umbral",
 }
 
 // resolvedPhrase mirrors it on the resolution side.
 func resolvedPhrase(typ string) string {
 	if typ == "offline" {
 		return "señal restablecida"
+	}
+	if typ == "container_missing" {
+		return "container detected again"
 	}
 	return "alerta resuelta"
 }
@@ -412,7 +416,7 @@ func (n *Notifier) postDiscord(ctx context.Context, evt Event, webhookURL string
 		desc = fmt.Sprintf("valor %.1f fuera de umbral", evt.Value)
 	}
 	title, color := firedTitle(evt), discordColorFired
-	if evt.Type != "offline" && evt.Kind != KindResolved {
+	if evt.Type != "offline" && evt.Type != "container_missing" && evt.Kind != KindResolved {
 		color = discordColorThreshold
 	}
 	if evt.Kind == KindResolved {

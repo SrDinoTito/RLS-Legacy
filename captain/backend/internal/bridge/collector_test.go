@@ -56,6 +56,42 @@ func TestSendHeartbeatUsesEnrollmentBearerContract(t *testing.T) {
 	}
 }
 
+func TestReportInventorySendsFullEngineSnapshotWithBearer(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/agents/inventory" || r.Method != http.MethodPost {
+			t.Errorf("unexpected inventory request %s %s", r.Method, r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer rlst_inventory-secret" {
+			t.Errorf("unexpected authorization header %q", got)
+		}
+		var got inventorySnapshot
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Errorf("decode inventory snapshot: %v", err)
+		}
+		if got.EngineID != "engine-123" || len(got.Containers) != 2 || got.Containers[1].State != "exited" {
+			t.Errorf("unexpected inventory snapshot: %+v", got)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	collector, err := NewCollector(Config{
+		DashboardURL: server.URL,
+		Token:        "rlst_inventory-secret",
+		Hostname:     "docker-01",
+		DockerSocket: "/unused-in-test",
+		Interval:     10 * time.Second,
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	collector.remote = server.Client()
+	collector.reportInventory(context.Background(), "engine-123", []ContainerSummary{
+		{ID: "running-id", State: "running"},
+		{ID: "stopped-id", State: "exited"},
+	})
+}
+
 func TestVPSIdentityLabelsAreStableAndKeepContainerLabels(t *testing.T) {
 	labels := map[string]string{
 		"com.docker.compose.project": "billing",

@@ -112,6 +112,8 @@ export function alertTypeLabel(type: string): string {
 	switch (type) {
 		case 'offline':
 			return 'OFFLINE';
+		case 'container_missing':
+			return 'CONTAINER MISSING';
 		case 'high_cpu':
 			return 'CPU ALTA';
 		case 'high_ram':

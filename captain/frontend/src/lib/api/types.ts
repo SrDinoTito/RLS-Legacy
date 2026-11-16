@@ -22,7 +22,7 @@ export interface Agent {
 	hostname: string;
 	/** JSON crudo del backend: string o null. */
 	container_id: string | null;
-	status: 'online' | 'offline' | string;
+	status: 'online' | 'offline' | 'missing' | string;
 	/** Unix del server time (DSG-003), null si nunca reportó. */
 	last_seen: number | null;
 	interval: number;
@@ -158,7 +158,7 @@ export interface User {
 export interface SseHeartbeatPayload {
 	agent_id: number;
 	name: string;
-	status: 'online' | 'offline' | string;
+	status: 'online' | 'offline' | 'missing' | string;
 }
 
 /** agent_offline / agent_online comparten forma {agent_id,name,status}. */

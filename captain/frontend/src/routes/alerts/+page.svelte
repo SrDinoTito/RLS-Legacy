@@ -1,6 +1,7 @@
 <script lang="ts">
 	import Cpu from '@lucide/svelte/icons/cpu';
 	import MemoryStick from '@lucide/svelte/icons/memory-stick';
+	import PackageX from '@lucide/svelte/icons/package-x';
 	import WifiOff from '@lucide/svelte/icons/wifi-off';
 	import { toast } from 'svelte-sonner';
 	import { listAlerts, resolveAlert } from '#lib/api/client.js';
@@ -35,6 +36,7 @@
 	const pageAlerts = $derived(alerts.slice(currentPage * pageSize, (currentPage + 1) * pageSize));
 	const openByType = $derived.by(() => ({
 		offline: openAlerts.filter((alert) => alert.type === 'offline').length,
+		container_missing: openAlerts.filter((alert) => alert.type === 'container_missing').length,
 		high_cpu: openAlerts.filter((alert) => alert.type === 'high_cpu').length,
 		high_ram: openAlerts.filter((alert) => alert.type === 'high_ram').length
 	}));
@@ -123,6 +125,16 @@
 					<span>{openByType.offline} abiertas</span>
 				</div>
 				<p>Se activa tras más de 3 intervalos sin recibir un reporte y se resuelve al reconectar.</p>
+			</div>
+		</article>
+		<article class="alarm-guide alarm-guide--missing">
+			<div class="alarm-guide__icon"><PackageX size={18} strokeWidth={1.8} aria-hidden="true" /></div>
+			<div class="min-w-0">
+				<div class="alarm-guide__heading">
+					<h2>Missing container</h2>
+					<span>{openByType.container_missing} open</span>
+				</div>
+				<p>Stowaway compares the full Docker inventory. If a known instance disappears, it is kept in history and reported.</p>
 			</div>
 		</article>
 		<article class="alarm-guide alarm-guide--cpu">

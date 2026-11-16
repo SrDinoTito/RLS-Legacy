@@ -109,6 +109,16 @@ type heartbeatRequest struct {
 	Metrics     *heartbeatMetrics `json:"metrics"`
 }
 
+type inventoryContainerRequest struct {
+	ID    string `json:"id"`
+	State string `json:"state"`
+}
+
+type inventoryRequest struct {
+	EngineID   string                       `json:"engine_id"`
+	Containers *[]inventoryContainerRequest `json:"containers"`
+}
+
 // validInterval clamps the reported interval into the accepted window
 // 5..300 seconds; anything missing or out of range falls back to the
 // documented default of 10.
@@ -267,6 +277,134 @@ func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "next_interval": interval})
 }
 
+// POST /api/v1/agents/inventory reconciles the complete Docker Engine view
+// from Stowaway. Unlike a missing heartbeat, a full snapshot proves whether
+// a previously discovered container was removed or is merely stopped.
+func (s *Server) handleContainerInventory(w http.ResponseWriter, r *http.Request) {
+	token, _ := r.Context().Value(ctxKeyToken{}).(*store.Token)
+	if token == nil || !token.VPSScoped || !token.Enrollment {
+		writeError(w, http.StatusForbidden, "a VPS-scoped Stowaway token is required")
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 2<<20)
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			writeError(w, http.StatusRequestEntityTooLarge, "container inventory is too large")
+			return
+		}
+		writeError(w, http.StatusBadRequest, "request body required")
+		return
+	}
+	if len(body) == 0 {
+		writeError(w, http.StatusBadRequest, "request body required")
+		return
+	}
+	var req inventoryRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	engineID := strings.TrimSpace(req.EngineID)
+	if engineID == "" || req.Containers == nil {
+		writeError(w, http.StatusBadRequest, `body must include a non-empty "engine_id" and "containers" array`)
+		return
+	}
+	if len(*req.Containers) > 50000 {
+		writeError(w, http.StatusRequestEntityTooLarge, "container inventory is too large")
+		return
+	}
+	known := make(map[string]struct{}, len(*req.Containers))
+	for _, item := range *req.Containers {
+		id := strings.TrimSpace(item.ID)
+		state := strings.TrimSpace(item.State)
+		if id == "" || state == "" {
+			writeError(w, http.StatusBadRequest, "each container needs a non-empty id and state")
+			return
+		}
+		if _, duplicate := known[id]; duplicate {
+			writeError(w, http.StatusBadRequest, "container inventory contains duplicate ids")
+			return
+		}
+		known[id] = struct{}{}
+	}
+	if err := s.store.BindTokenVPS(r.Context(), token.ID, engineID); err != nil {
+		switch {
+		case errors.Is(err, store.ErrTokenBoundToOtherVPS):
+			writeError(w, http.StatusConflict, "token is bound to a different VPS; create one token per VPS")
+		case errors.Is(err, store.ErrVPSAlreadyHasToken):
+			writeError(w, http.StatusConflict, "this VPS already has an active token")
+		default:
+			slog.Warn("VPS inventory token binding failed", "token_id", token.ID, "vps_id", engineID, "error", err)
+			writeError(w, http.StatusInternalServerError, "database error")
+		}
+		return
+	}
+	changes, err := s.store.ReconcileContainerInventory(r.Context(), token.ID, known, s.now().Unix())
+	if err != nil {
+		slog.Error("container inventory reconciliation failed", "token_id", token.ID, "vps_id", engineID, "error", err)
+		writeError(w, http.StatusInternalServerError, "database error")
+		return
+	}
+	for _, change := range changes {
+		s.publishInventoryTransition(r.Context(), change)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "changed": len(changes)})
+}
+
+func (s *Server) publishInventoryTransition(ctx context.Context, change store.InventoryTransition) {
+	agent := &change.Agent
+	if change.Status == "missing" {
+		s.broker.Broadcast("agent_missing", map[string]any{
+			"agent_id": agent.ID, "name": agent.Name, "status": "missing",
+		})
+		if change.ResolvedOffline > 0 {
+			s.broadcastInventoryResolved(agent.ID, "offline", change.ResolvedOffline)
+			s.notifyAgentEvent(ctx, notify.Event{
+				AgentID: agent.ID, AgentName: agent.Name, Type: "offline",
+				Message: "la VPS confirmó que el contenedor ya no existe; se cerró la alerta de señal",
+				TS:      s.now().Unix(), Kind: notify.KindResolved,
+			}, agent, nil)
+		}
+	} else {
+		s.broker.Broadcast("agent_offline", map[string]any{
+			"agent_id": agent.ID, "name": agent.Name, "status": "offline",
+		})
+		if change.ResolvedMissing > 0 {
+			s.broadcastInventoryResolved(agent.ID, "container_missing", change.ResolvedMissing)
+			s.notifyAgentEvent(ctx, notify.Event{
+				AgentID: agent.ID, AgentName: agent.Name, Type: "container_missing",
+				Message: "the container reappeared in the Docker inventory",
+				TS:      s.now().Unix(), Kind: notify.KindResolved,
+			}, agent, nil)
+		}
+	}
+	if change.NewAlert == nil {
+		return
+	}
+	alert := change.NewAlert
+	var value any
+	if alert.Value.Valid {
+		value = alert.Value.Float64
+	}
+	s.broker.Broadcast("alert_new", map[string]any{
+		"id": alert.ID, "agent_id": alert.AgentID, "type": alert.Type,
+		"value": value, "message": alert.Message.String, "fired_at": alert.FiredAt,
+	})
+	s.notifyAgentEvent(ctx, notify.Event{
+		AgentID: agent.ID, AgentName: agent.Name, Type: alert.Type,
+		Value: alert.Value.Float64, Message: alert.Message.String,
+		TS: alert.FiredAt, Kind: notify.KindNew,
+	}, agent, nil)
+}
+
+func (s *Server) broadcastInventoryResolved(agentID int64, typ string, count int64) {
+	s.broker.Broadcast("alert_resolved", map[string]any{
+		"agent_id": agentID, "type": typ, "count": count,
+	})
+}
+
 func reportedVPSID(rawLabels json.RawMessage) string {
 	var labels map[string]string
 	if len(rawLabels) == 0 || json.Unmarshal(rawLabels, &labels) != nil {
@@ -307,28 +445,34 @@ func (s *Server) beaconExistingAgent(ctx context.Context, agent *store.Agent,
 			"agent_id", agent.ID, "name", name, "hostname", req.Hostname)
 	}
 	if prev != "online" || wasDismissed {
-		n, err := ingest.ResolveOfflineAlerts(ctx, s.store, agent.ID, now)
+		nOffline, err := ingest.ResolveOfflineAlerts(ctx, s.store, agent.ID, now)
 		if err != nil {
 			return nil, err
 		}
-		s.broadcastAgentOnline(agent.ID, name, n, now.Unix())
-		if n > 0 {
+		nMissing, err := s.store.ResolveAlerts(ctx, agent.ID, "container_missing", now.Unix())
+		if err != nil {
+			return nil, err
+		}
+		s.broadcastAgentOnline(agent.ID, name, nOffline, nMissing, now.Unix())
+		for _, resolved := range []struct {
+			typ   string
+			count int64
+			text  string
+		}{
+			{typ: "offline", count: nOffline, text: fmt.Sprintf("agente de nuevo en línea (%d alerta(s) offline resuelta(s))", nOffline)},
+			{typ: "container_missing", count: nMissing, text: "the container is reporting again and is present in Docker"},
+		} {
+			if resolved.count == 0 {
+				continue
+			}
 			slog.Info("agent back online",
 				"agent_id", agent.ID, "name", name,
-				"hostname", req.Hostname, "alerts_resolved", n)
-			// REQ-050 enriched resolution: the agent row + the FRESH beat
-			// metrics (not yet in the store) tag along. Host/container come
-			// from the request — the local agent struct was fetched before
-			// BeaconAgent refreshed the row on disk.
+				"hostname", req.Hostname, "alerts_resolved", resolved.count, "type", resolved.typ)
 			evt := notify.Event{
-				AgentID: agent.ID, AgentName: name, Type: "offline",
-				Message: fmt.Sprintf("agente de nuevo en línea (%d alerta(s) offline resuelta(s))", n),
+				AgentID: agent.ID, AgentName: name, Type: resolved.typ,
+				Message: resolved.text,
 				TS:      now.Unix(), Kind: notify.KindResolved,
 			}
-			applyAgentTags(&evt, agent) // tags ride here (beats never touch them)
-			// Host/container/interval come fresh from the request: the
-			// local agent struct was read before BeaconAgent refreshed
-			// the row on disk.
 			evt.Hostname, evt.ContainerID, evt.Interval = req.Hostname, deref(req.ContainerID, ""), interval
 			applyBeatContext(&evt, req.Metrics)
 			s.enqueueAlertNotification(ctx, evt)
@@ -355,7 +499,18 @@ func (s *Server) enrollmentAgent(ctx context.Context, token *store.Token,
 	if name == "" {
 		return nil, errNameRequired
 	}
-	a, err := s.store.AgentByName(ctx, name)
+	var (
+		a   *store.Agent
+		err error
+	)
+	if token.VPSScoped && strings.TrimSpace(deref(req.ContainerID, "")) != "" {
+		// A Docker container ID identifies one immutable instance. A replacement
+		// container receives a separate agent row instead of overwriting the
+		// removed instance's name/metrics/history.
+		a, err = s.store.AgentByContainerID(ctx, deref(req.ContainerID, ""))
+	} else {
+		a, err = s.store.AgentByName(ctx, name)
+	}
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		// First beat of this fleet member: register + inherit token tags.
@@ -479,14 +634,15 @@ func (s *Server) broadcastHeartbeat(agentID int64, name, status string) {
 // offline alert(s) that the resurrection just closed. (The REQ-050
 // resolution notification lives in the heartbeat handler: it carries the
 // fresh beat metrics, which only that site knows.)
-func (s *Server) broadcastAgentOnline(agentID int64, name string, resolved int64, resolvedAt int64) {
+func (s *Server) broadcastAgentOnline(agentID int64, name string, resolvedOffline, resolvedMissing int64, resolvedAt int64) {
 	s.broker.Broadcast("agent_online", map[string]any{
 		"agent_id": agentID, "name": name, "status": "online",
 	})
-	if resolved > 0 {
-		s.broker.Broadcast("alert_resolved", map[string]any{
-			"agent_id": agentID, "type": "offline", "count": resolved,
-		})
+	if resolvedOffline > 0 {
+		s.broadcastInventoryResolved(agentID, "offline", resolvedOffline)
+	}
+	if resolvedMissing > 0 {
+		s.broadcastInventoryResolved(agentID, "container_missing", resolvedMissing)
 	}
 }
 
