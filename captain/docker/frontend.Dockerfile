@@ -30,5 +30,5 @@ CMD ["bun", "run", "server.ts"]
 
 LABEL org.opencontainers.image.title="rls-legacy-frontend" \
       org.opencontainers.image.description="Frontend Bun del dashboard RLS Legacy." \
-      org.opencontainers.image.version="1.0.3" \
+      org.opencontainers.image.version="1.0.4" \
       org.opencontainers.image.licenses="MIT"

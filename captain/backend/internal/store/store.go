@@ -198,6 +198,7 @@ func Open(path string) (*Store, error) {
 		{"agents.disk_total_mb", `ALTER TABLE agents ADD COLUMN disk_total_mb REAL`},
 		{"agents.container_tags", `ALTER TABLE agents ADD COLUMN container_tags TEXT`},
 		{"agents.monitoring_ignored", `ALTER TABLE agents ADD COLUMN monitoring_ignored INTEGER NOT NULL DEFAULT 0`},
+		{"agents.identity_key", `ALTER TABLE agents ADD COLUMN identity_key TEXT`},
 		{"tokens.vps_id", `ALTER TABLE tokens ADD COLUMN vps_id TEXT`},
 		{"tokens.vps_scoped", `ALTER TABLE tokens ADD COLUMN vps_scoped INTEGER NOT NULL DEFAULT 0`},
 	} {
@@ -215,6 +216,28 @@ func Open(path string) (*Store, error) {
 		 ON tokens(vps_id) WHERE vps_id IS NOT NULL AND revoked_at IS NULL`); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate active VPS token index: %w", err)
+	}
+	// Older Stowaway builds already used a stable name for Compose/Swarm
+	// project/service/replica identities. Backfill it so a replacement runtime
+	// ID can reconnect to the existing logical row after this upgrade.
+	if _, err := db.ExecContext(ctx,
+		`UPDATE agents SET identity_key = name
+		 WHERE identity_key IS NULL AND name IS NOT NULL
+		   AND TRIM(name) <> ''
+		   AND token_id IN (SELECT id FROM tokens WHERE vps_scoped = 1 AND enrollment = 1)`); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate VPS agent identities: %w", err)
+	}
+	if err := mergeDuplicateAgentIdentities(ctx, db, time.Now().Unix()); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("merge duplicate VPS agent identities: %w", err)
+	}
+	if _, err := db.ExecContext(ctx,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_agents_token_identity
+		 ON agents(token_id, identity_key)
+		 WHERE token_id IS NOT NULL AND identity_key IS NOT NULL`); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate unique VPS agent identity index: %w", err)
 	}
 	return &Store{db: db}, nil
 }

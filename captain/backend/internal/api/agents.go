@@ -105,6 +105,7 @@ type heartbeatRequest struct {
 	Interval    int               `json:"interval"`
 	Name        *string           `json:"name"`
 	ContainerID *string           `json:"container_id"`
+	IdentityKey string            `json:"identity_key"`
 	Labels      json.RawMessage   `json:"labels"`
 	Metrics     *heartbeatMetrics `json:"metrics"`
 }
@@ -151,6 +152,19 @@ func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	interval := validInterval(req.Interval)
 	now := s.now()
 	nowSec := now.Unix()
+	// Existing Stowaway versions already report a stable generated name for
+	// Compose/Dokploy project/service/replica identities. Accept the explicit
+	// key from newer bridges, with name as the backwards-compatible fallback.
+	if token != nil && token.VPSScoped {
+		req.IdentityKey = strings.TrimSpace(req.IdentityKey)
+		if req.IdentityKey == "" && req.Name != nil {
+			req.IdentityKey = deref(req.Name, "")
+		}
+	} else {
+		// Stable Docker identities are only meaningful inside a VPS-scoped
+		// token; ignore this extension for legacy Explorer credentials.
+		req.IdentityKey = ""
+	}
 
 	var agent *store.Agent
 	if token != nil && token.Enrollment {
@@ -431,7 +445,7 @@ func (s *Server) beaconExistingAgent(ctx context.Context, agent *store.Agent,
 		name = req.Hostname
 	}
 	if err := s.store.BeaconAgent(ctx, agent.ID,
-		name, req.Hostname, deref(req.ContainerID, ""),
+		name, req.Hostname, deref(req.ContainerID, ""), req.IdentityKey,
 		rawLabels(req.Labels), interval, nowSec); err != nil {
 		return nil, err
 	}
@@ -504,10 +518,13 @@ func (s *Server) enrollmentAgent(ctx context.Context, token *store.Token,
 		err error
 	)
 	if token.VPSScoped && strings.TrimSpace(deref(req.ContainerID, "")) != "" {
-		// A Docker container ID identifies one immutable instance. A replacement
-		// container receives a separate agent row instead of overwriting the
-		// removed instance's name/metrics/history.
-		a, err = s.store.AgentByContainerID(ctx, deref(req.ContainerID, ""))
+		// Prefer the exact runtime ID. If Docker recreated the same logical
+		// Compose/Dokploy replica, reconnect its new ID to the existing row so
+		// metrics and alert history stay on one agent.
+		a, err = s.store.AgentByTokenContainerID(ctx, token.ID, deref(req.ContainerID, ""))
+		if errors.Is(err, store.ErrNotFound) && req.IdentityKey != "" {
+			a, err = s.store.AgentByTokenIdentity(ctx, token.ID, req.IdentityKey)
+		}
 	} else {
 		a, err = s.store.AgentByName(ctx, name)
 	}
@@ -515,12 +532,17 @@ func (s *Server) enrollmentAgent(ctx context.Context, token *store.Token,
 	case errors.Is(err, store.ErrNotFound):
 		// First beat of this fleet member: register + inherit token tags.
 		id, cerr := s.store.CreateEnrollmentAgent(ctx, token.ID, name, req.Hostname,
-			deref(req.ContainerID, ""), rawLabels(req.Labels),
+			deref(req.ContainerID, ""), req.IdentityKey, rawLabels(req.Labels),
 			token.Tags.String, interval, nowSec)
 		if cerr != nil {
 			if errors.Is(cerr, store.ErrDuplicate) {
-				// Practically impossible (no shared UNIQUE target for
-				// enrollment rows): report distinctly and bail out.
+				// Concurrent first reports of one logical Docker identity may
+				// race on the uniqueness guard. Recover the winner and update it.
+				if token.VPSScoped && req.IdentityKey != "" {
+					if a, err = s.store.AgentByTokenIdentity(ctx, token.ID, req.IdentityKey); err == nil {
+						return s.beaconExistingAgent(ctx, a, req, interval, nowSec, now)
+					}
+				}
 				return nil, errEnrollmentDup
 			}
 			return nil, cerr

@@ -96,41 +96,45 @@ func TestE2E_ContainerInventoryKeepsRemovedInstancesAndAlerts(t *testing.T) {
 		t.Fatalf("missing alert history wrong: %+v err=%v", alerts, err)
 	}
 
-	// Dokploy can replace a Compose replica using the same service name. The
-	// new Docker ID becomes a new row; the old ID remains as a missing record.
+	// Dokploy can replace a Compose replica using the same logical identity.
+	// The new runtime ID must reuse the old row and keep its history.
 	if result := beat(t, srv, token, stowawayBeat("web", "container-web-new", "engine-inventory", validBeatTS+20_000)); result.status != http.StatusOK {
 		t.Fatalf("replacement container heartbeat: %d %s", result.status, result.body)
 	}
 	details, err = st.ListAgentsDetailed(t.Context(), false)
-	if err != nil || len(details) != 3 {
-		t.Fatalf("replacement must preserve prior instance: rows=%d err=%v", len(details), err)
+	if err != nil || len(details) != 2 {
+		t.Fatalf("replacement must reuse the logical container row: rows=%d err=%v", len(details), err)
 	}
-	newFound := false
-	oldStillMissing := false
+	replacementFound := false
 	for _, agent := range details {
-		if agent.ContainerID.String == "container-web-new" {
-			newFound = agent.Status == "online"
-		}
-		if agent.ContainerID.String == "container-web-old" {
-			oldStillMissing = agent.Status == "missing"
+		if agent.ID == oldAgentID {
+			replacementFound = agent.ContainerID.String == "container-web-new" && agent.Status == "online"
 		}
 	}
-	if !newFound || !oldStillMissing {
-		t.Fatalf("replacement/history state mismatch: %+v", details)
-	}
-
-	// When the exact old Docker instance reappears, its missing alert resolves
-	// automatically and the same historical record returns to online.
-	if result := beat(t, srv, token, stowawayBeat("web", "container-web-old", "engine-inventory", validBeatTS+30_000)); result.status != http.StatusOK {
-		t.Fatalf("old container heartbeat recovery: %d %s", result.status, result.body)
-	}
-	oldAgent, err := st.AgentByID(t.Context(), oldAgentID)
-	if err != nil || oldAgent.Status != "online" {
-		t.Fatalf("old instance did not recover: %+v err=%v", oldAgent, err)
+	if !replacementFound {
+		t.Fatalf("replacement did not rebind the old logical row: %+v", details)
 	}
 	alerts, err = st.ListAlerts(t.Context(), oldAgentID)
 	if err != nil || len(alerts) != 1 || !alerts[0].ResolvedAt.Valid {
-		t.Fatalf("missing alert was not resolved on recovery: %+v err=%v", alerts, err)
+		t.Fatalf("replacement did not resolve the previous missing alert: %+v err=%v", alerts, err)
+	}
+	history, err := st.HistoryRollup(t.Context(), oldAgentID, validBeatTS/1000-10, validBeatTS/1000+40, 1)
+	if err != nil || len(history) != 2 {
+		t.Fatalf("replacement did not preserve both metric samples: buckets=%d err=%v", len(history), err)
+	}
+
+	// Another redeploy of the same service remains one row and advances only
+	// the current Docker ID.
+	if result := beat(t, srv, token, stowawayBeat("web", "container-web-next", "engine-inventory", validBeatTS+30_000)); result.status != http.StatusOK {
+		t.Fatalf("second replacement heartbeat: %d %s", result.status, result.body)
+	}
+	details, err = st.ListAgentsDetailed(t.Context(), false)
+	if err != nil || len(details) != 2 {
+		t.Fatalf("repeated replacement created duplicate rows: rows=%d err=%v", len(details), err)
+	}
+	current, err := st.AgentByID(t.Context(), oldAgentID)
+	if err != nil || current.Status != "online" || current.ContainerID.String != "container-web-next" {
+		t.Fatalf("current runtime ID/status not refreshed: %+v err=%v", current, err)
 	}
 }
 

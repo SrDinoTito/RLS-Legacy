@@ -8,8 +8,9 @@ import (
 	"strings"
 )
 
-// Agent is a monitored explorer instance. Rows are 1:1 with bearer tokens:
-// the first heartbeat carrying a token auto-registers its agent.
+// Agent is one monitored logical workload. Legacy agents remain 1:1 with
+// bearer tokens; VPS-scoped Docker agents are 1:1 with their stable logical
+// identity while ContainerID tracks the current runtime instance.
 // DismissedAt != Invalid marks a SOFT-dismissed agent (TASK-009): the row
 // is retained complete (metrics / history / resolved alerts) as a permanent
 // record, but it is hidden from the active views and never fires offline
@@ -20,6 +21,10 @@ type Agent struct {
 	Name        string
 	Hostname    string
 	ContainerID sql.NullString
+	// IdentityKey is the stable logical identity for VPS-scoped Docker
+	// containers (for example Compose project/service/replica). container_id
+	// remains the current, replaceable Docker runtime ID.
+	IdentityKey sql.NullString
 	Interval    int
 	Status      string
 	LastSeen    float64
@@ -81,7 +86,7 @@ type Alert struct {
 // agentColumns is the SELECT projection shared by every agent lookup that
 // feeds scanAgent. dismissed_at rides along everywhere (TASK-009) so callers
 // can tell active rows from soft-dismissed ones with a single scan helper.
-const agentColumns = `id, token_hash, name, hostname, container_id, interval, status,
+const agentColumns = `id, token_hash, name, hostname, container_id, identity_key, interval, status,
 		       last_seen, thresholds_cpu, thresholds_ram, labels, created_at, dismissed_at, tags, token_id,
 		       disk_free_mb, disk_total_mb, container_tags, monitoring_ignored`
 
@@ -120,11 +125,12 @@ func (s *Store) CreateAgent(ctx context.Context, tokenHash, name, hostname, cont
 // BeaconAgent upserts beacon metadata from an existing agent's heartbeat:
 // name/hostname/container/labels/interval are refreshed, status forced to
 // 'online' and last_seen set to server time (never the payload ts).
-func (s *Store) BeaconAgent(ctx context.Context, id int64, name, hostname, containerID, labels string, interval int, nowSec int64) error {
+func (s *Store) BeaconAgent(ctx context.Context, id int64, name, hostname, containerID, identityKey, labels string, interval int, nowSec int64) error {
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE agents SET name = ?, hostname = ?, container_id = ?, labels = ?,
+		`UPDATE agents SET name = ?, hostname = ?, container_id = ?,
+		        identity_key = COALESCE(NULLIF(?, ''), identity_key), labels = ?,
 		        interval = ?, status = 'online', last_seen = ? WHERE id = ?`,
-		name, hostname, containerID, labels, interval, nowSec, id)
+		name, hostname, containerID, identityKey, labels, interval, nowSec, id)
 	if err != nil {
 		return fmt.Errorf("beacon agent %d: %w", id, err)
 	}
@@ -393,7 +399,7 @@ func scanAgent(row scannableRow) (*Agent, error) {
 	// token_hash is NULL for enrollment agents (TASK-013 1:N fleet rows)
 	// so it scans through a NullString instead of a raw string.
 	var tokenHash sql.NullString
-	err := row.Scan(&a.ID, &tokenHash, &a.Name, &a.Hostname, &a.ContainerID, &a.Interval,
+	err := row.Scan(&a.ID, &tokenHash, &a.Name, &a.Hostname, &a.ContainerID, &a.IdentityKey, &a.Interval,
 		&a.Status, &a.LastSeen, &a.ThresholdsCPU, &a.ThresholdsRAM, &a.Labels, &a.CreatedAt,
 		&a.DismissedAt, &a.Tags, &a.TokenID, &a.DiskFreeMB, &a.DiskTotalMB, &a.ContainerTags, &a.MonitoringIgnored)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -596,14 +602,29 @@ func (s *Store) AgentByName(ctx context.Context, name string) (*Agent, error) {
 		 FROM agents WHERE name = ? ORDER BY id ASC LIMIT 1`, name))
 }
 
-// AgentByContainerID resolves a Docker-backed agent by the immutable ID of a
-// concrete container instance. VPS-scoped Stowaway tokens use this identity
-// so a replacement container does not overwrite the historical record of
-// the container that was removed.
+// AgentByContainerID resolves the most recent row for a Docker runtime ID.
+// Prefer AgentByTokenContainerID for VPS-scoped lookups.
 func (s *Store) AgentByContainerID(ctx context.Context, containerID string) (*Agent, error) {
 	return scanAgent(s.db.QueryRowContext(ctx,
 		`SELECT `+agentColumns+`
 		 FROM agents WHERE container_id = ? ORDER BY id DESC LIMIT 1`, containerID))
+}
+
+// AgentByTokenContainerID resolves a Docker runtime ID within one token's VPS
+// inventory. Scoping prevents a malformed client from adopting another VPS's
+// agent row.
+func (s *Store) AgentByTokenContainerID(ctx context.Context, tokenID int64, containerID string) (*Agent, error) {
+	return scanAgent(s.db.QueryRowContext(ctx,
+		`SELECT `+agentColumns+`
+		 FROM agents WHERE token_id = ? AND container_id = ? ORDER BY id DESC LIMIT 1`, tokenID, containerID))
+}
+
+// AgentByTokenIdentity resolves the logical container row for a VPS token.
+// Unlike a Docker ID, identityKey survives a Compose/Dokploy recreate.
+func (s *Store) AgentByTokenIdentity(ctx context.Context, tokenID int64, identityKey string) (*Agent, error) {
+	return scanAgent(s.db.QueryRowContext(ctx,
+		`SELECT `+agentColumns+`
+		 FROM agents WHERE token_id = ? AND identity_key = ? LIMIT 1`, tokenID, identityKey))
 }
 
 // InventoryTransition describes one lifecycle change caused by a complete
@@ -754,11 +775,11 @@ func fireInventoryAlert(ctx context.Context, tx *sql.Tx, agentID int64, typ stri
 // agents share one token) and the link rides on agents.token_id. tagsJSON
 // is the ENROLLMENT TOKEN's tags INHERITED at creation time (TASK-013
 // choice: later PUT /tokens/{id}/tags does NOT re-sync adopted agents).
-func (s *Store) CreateEnrollmentAgent(ctx context.Context, tokenID int64, name, hostname, containerID, labels, tagsJSON string, interval int, nowSec int64) (int64, error) {
+func (s *Store) CreateEnrollmentAgent(ctx context.Context, tokenID int64, name, hostname, containerID, identityKey, labels, tagsJSON string, interval int, nowSec int64) (int64, error) {
 	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO agents (token_hash, token_id, name, hostname, container_id, interval, status, last_seen, labels, tags, created_at)
-		 VALUES (NULL, ?, ?, ?, ?, ?, 'online', ?, ?, ?, ?)`,
-		tokenID, name, hostname, containerID, interval, nowSec, labels, nullableText(tagsJSON), nowSec)
+		`INSERT INTO agents (token_hash, token_id, name, hostname, container_id, identity_key, interval, status, last_seen, labels, tags, created_at)
+		 VALUES (NULL, ?, ?, ?, ?, NULLIF(?, ''), ?, 'online', ?, ?, ?, ?)`,
+		tokenID, name, hostname, containerID, identityKey, interval, nowSec, labels, nullableText(tagsJSON), nowSec)
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
 			return 0, ErrDuplicate
