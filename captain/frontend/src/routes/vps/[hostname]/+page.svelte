@@ -24,7 +24,7 @@
 		TableHead,
 		TableRow
 	} from '#lib/components/ui/table/index.js';
-	import { fmtBytesPairMb, fmtPct, fmtUptime } from '#lib/format.js';
+	import { agentStatusLabel, fmtBytesPairMb, fmtPct, fmtUptime } from '#lib/format.js';
 
 	const key = $derived(page.params.hostname ?? '');
 	const agents = $derived(sse.list());
@@ -116,7 +116,7 @@
 		<Card class="vps-profile-stat"><span>En monitoreo</span><strong>{monitoredAgents.length.toString().padStart(2, '0')}</strong></Card>
 		<Card class="vps-profile-stat vps-profile-stat--online"><span>En línea</span><strong>{onlineCount.toString().padStart(2, '0')}</strong></Card>
 		<Card class="vps-profile-stat vps-profile-stat--offline"><span>Sin señal</span><strong>{offlineCount.toString().padStart(2, '0')}</strong></Card>
-		<Card class="vps-profile-stat vps-profile-stat--missing"><span>Missing</span><strong>{missingCount.toString().padStart(2, '0')}</strong></Card>
+		<Card class="vps-profile-stat vps-profile-stat--missing"><span>Down</span><strong>{missingCount.toString().padStart(2, '0')}</strong></Card>
 		<Card class="vps-profile-stat vps-profile-stat--alerts"><span>Alertas abiertas</span><strong>{alertCount.toString().padStart(2, '0')}</strong></Card>
 		{#if isAdmin}<Card class="vps-profile-stat"><span>Ignorados</span><strong>{ignoredAgents.length.toString().padStart(2, '0')}</strong></Card>{/if}
 	</section>
@@ -163,7 +163,7 @@
 								<TableCell>
 									<span class="flex items-center gap-2 whitespace-nowrap">
 										<span class="status-dot {ignored ? '' : agent.status === 'missing' ? 'status-dot--missing' : agent.status === 'online' ? 'status-dot--online' : 'status-dot--offline'}" aria-hidden="true"></span>
-										<span>{ignored ? 'IGNORADO' : agent.status === 'missing' ? 'MISSING' : agent.status === 'online' ? 'ONLINE' : 'OFFLINE'}</span>
+										<span>{ignored ? 'IGNORADO' : agentStatusLabel(agent.status)}</span>
 									</span>
 								</TableCell>
 								<TableCell class="max-w-[250px]">

@@ -180,7 +180,7 @@
 					{agent?.name ?? `Agent #${idNum}`}
 				</h1>
 				{#if agent?.status === 'missing'}
-					<Badge variant="outline">MISSING IN DOCKER</Badge>
+					<Badge variant="destructive">DOWN</Badge>
 				{:else if agent?.status === 'offline'}
 					<Badge variant="destructive">OFFLINE</Badge>
 				{:else}

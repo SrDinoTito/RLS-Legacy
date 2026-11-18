@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'bun:test';
-import { alertTypeLabel, fmtAlertMessage, fmtAlertReading } from './format';
+import { agentStatusLabel, alertTypeLabel, fmtAlertMessage, fmtAlertReading } from './format';
+
+describe('agentStatusLabel', () => {
+	it('shows a removed container as DOWN without changing the alert type', () => {
+		expect(agentStatusLabel('missing')).toBe('DOWN');
+		expect(agentStatusLabel('offline')).toBe('OFFLINE');
+		expect(agentStatusLabel('online')).toBe('ONLINE');
+		expect(alertTypeLabel('container_missing')).toBe('CONTAINER MISSING');
+	});
+});
 
 describe('fmtAlertReading', () => {
 	it('muestra las lecturas de CPU y RAM como porcentaje', () => {

@@ -60,7 +60,7 @@
 			<strong>{offlineCount.toString().padStart(2, '0')}</strong>
 		</Card>
 		<Card class="tag-profile-stat tag-profile-stat--missing">
-			<span>Missing in Docker</span>
+			<span>Down</span>
 			<strong>{missingCount.toString().padStart(2, '0')}</strong>
 		</Card>
 		<Card class="tag-profile-stat tag-profile-stat--alerts">

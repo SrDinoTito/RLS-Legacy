@@ -136,3 +136,17 @@ export function fmtAlertReading(type: string, value: number | null | undefined):
 	if (type === 'high_cpu' || type === 'high_ram') return `${value.toFixed(1)}%`;
 	return String(value);
 }
+
+/** Human-facing container state. `missing` remains the backend state; show it as DOWN in the UI. */
+export function agentStatusLabel(status: string): string {
+	switch (status) {
+		case 'online':
+			return 'ONLINE';
+		case 'offline':
+			return 'OFFLINE';
+		case 'missing':
+			return 'DOWN';
+		default:
+			return status.toUpperCase();
+	}
+}

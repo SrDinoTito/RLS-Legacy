@@ -713,7 +713,7 @@ dialog.tokens-manage-dialog { max-height: min(94dvh, calc(100dvh - 1rem)); }
 
 .tag-profile-stat--online > strong { color: hsl(187 86% 66%); }
 .tag-profile-stat--offline > strong { color: hsl(8 78% 68%); }
-.tag-profile-stat--missing > strong { color: hsl(215 16% 65%); }
+.tag-profile-stat--missing > strong { color: hsl(8 78% 68%); }
 .tag-profile-stat--alerts > strong { color: hsl(40 88% 65%); }
 
 .tag-agent-grid {
@@ -767,7 +767,7 @@ dialog.tokens-manage-dialog { max-height: min(94dvh, calc(100dvh - 1rem)); }
 .vps-overview-stat--offline > strong { color: hsl(8 78% 68%); }
 .vps-profile-stat--offline > strong { color: hsl(8 78% 68%); }
 .vps-overview-stat--missing > strong,
-.vps-profile-stat--missing > strong { color: hsl(213 28% 76%); }
+.vps-profile-stat--missing > strong { color: hsl(8 78% 68%); }
 .vps-overview-stat--alerts > strong,
 .vps-profile-stat--alerts > strong { color: hsl(40 88% 65%); }
 
@@ -807,7 +807,7 @@ dialog.tokens-manage-dialog { max-height: min(94dvh, calc(100dvh - 1rem)); }
 .status-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .status-dot--online { color: hsl(187 86% 58%); }
 .status-dot--offline { color: hsl(8 80% 60%); }
-.status-dot--missing { color: hsl(213 28% 76%); }
+.status-dot--missing { color: hsl(8 82% 68%); }
 .vps-card-footer { display: flex; justify-content: space-between; align-items: center; margin-top: 2px; padding-top: 9px; border-top: 1px solid hsl(210 27% 54% / 0.12); color: hsl(213 15% 58%); font-size: 10px; }
 .vps-open-arrow { color: hsl(40 88% 65%); font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
 
@@ -1174,7 +1174,7 @@ body::before {
 
 .hero-stat-value.is-live { color: hsl(187 86% 66%); }
 .hero-stat-value.is-offline { color: hsl(8 78% 68%); }
-.hero-stat-value.is-missing { color: hsl(213 28% 76%); }
+.hero-stat-value.is-missing { color: hsl(8 78% 68%); }
 .hero-stat-value.is-alert { color: hsl(40 88% 65%); }
 
 .hero-navigation {
@@ -1311,7 +1311,7 @@ body::before {
 }
 
 .agent-card--offline::before { background: hsl(8 80% 55% / 0.72); }
-.agent-card--missing::before { background: hsl(213 28% 76% / 0.62); }
+.agent-card--missing::before { background: hsl(8 80% 55% / 0.72); }
 .agent-card--ignored { border-color: hsl(210 27% 54% / 0.22); background: linear-gradient(145deg, hsl(219 25% 9% / 0.92), hsl(222 30% 6% / 0.92)); }
 .agent-card--ignored::before { background: hsl(213 15% 58% / 0.6); }
 

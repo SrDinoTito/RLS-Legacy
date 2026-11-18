@@ -143,7 +143,7 @@ function onSseAgentStatus(data: SseHeartbeatPayload, cameOnline: boolean): void 
 	if (!cameOnline && !existing?.monitoring_ignored) {
 		// toast sutil de caída (REQ-023): warning corto, sin agresividad
 		if (data.status === 'missing') {
-			toast.warning(`${data.name || 'Container'} is missing from Docker`, {
+			toast.warning(`${data.name || 'Container'} is DOWN`, {
 				description: 'CONTAINER MISSING — the VPS inventory confirmed it is no longer present.'
 			});
 		} else {

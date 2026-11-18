@@ -7,7 +7,7 @@
 	import { Badge } from '#lib/components/ui/badge/index.js';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import { Card } from '#lib/components/ui/card/index.js';
-	import { fmtAgo } from '#lib/format.js';
+	import { agentStatusLabel, fmtAgo } from '#lib/format.js';
 
 	/*
 	 * Card de un agent (REQ-022): nombre/hostname, badge ONLINE (dorado
@@ -53,7 +53,7 @@
 		ignored
 			? 'agent-card--ignored text-muted-foreground'
 			: missing
-			? 'agent-card--missing border-muted-foreground/35'
+			? 'agent-card--missing border-destructive/50 shadow-[0_0_14px_hsl(8_80%_55%/0.15)]'
 			: offline
 			// glow destructive sutil y PERSISTENTE en cards OFFLINE (exigido por la calidad visual)
 			? 'agent-card--offline border-destructive/50 shadow-[0_0_14px_hsl(8_80%_55%/0.15)]'
@@ -103,7 +103,7 @@
 		{#if ignored}
 			<Badge variant="outline">IGNORADO</Badge>
 		{:else if missing}
-			<Badge variant="outline">MISSING</Badge>
+			<Badge variant="destructive">{agentStatusLabel(agent.status)}</Badge>
 		{:else if offline}
 			<Badge variant="destructive">OFFLINE</Badge>
 		{:else}
@@ -121,7 +121,7 @@
 		{:else if unavailable}
 			<!-- métricas atenuadas: son el ÚLTIMO beat persistido, no en vivo -->
 			<div class="flex items-center justify-between text-[10px] uppercase tracking-wider text-muted-foreground">
-				<span>{missing ? 'container missing' : 'últimos datos'}</span>
+				<span>{missing ? 'container down' : 'últimos datos'}</span>
 				<span class="tabular-nums">visto {fmtAgo(agent.last_seen, nowSecs)}</span>
 			</div>
 		{/if}
@@ -150,7 +150,7 @@
 				{#if ignored}
 					monitoreo pausado
 				{:else if missing}
-					missing in Docker
+					not present in Docker inventory
 				{:else if offline}
 					intervalo {agent.interval}s
 				{:else}

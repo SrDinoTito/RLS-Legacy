@@ -29,7 +29,8 @@
 		fmtDisk,
 		fmtPct,
 		fmtUptime,
-		fmtAgo
+		fmtAgo,
+		agentStatusLabel
 	} from '#lib/format.js';
 	import type { Agent } from '#lib/api/types.js';
 	import { allAgentTags } from '#lib/tags.js';
@@ -228,7 +229,7 @@
 					<strong class="hero-stat-value is-offline">{offlineCount.toString().padStart(2, '0')}</strong>
 				</div>
 				<div class="hero-stat">
-					<span class="hero-stat-label">Missing</span>
+					<span class="hero-stat-label">Down</span>
 					<strong class="hero-stat-value is-missing">{missingCount.toString().padStart(2, '0')}</strong>
 				</div>
 				<div class="hero-stat">
@@ -300,7 +301,7 @@
 				options={[
 				{ value: 'todo', label: `Todos (${agents.length + ignoredAgents.length})` },
 					{ value: 'offline', label: `Sin señal (${offlineCount})` },
-					{ value: 'missing', label: `Missing (${missingCount})` },
+					{ value: 'missing', label: `Down (${missingCount})` },
 					{ value: 'ignored', label: `Ignorados (${ignoredAgents.length})` }
 				]}
 				bind:value={filter}
@@ -485,7 +486,7 @@
 									aria-hidden="true"
 								></span>
 								<span class="text-[11px] tracking-wider {unavailable ? '' : 'text-foreground'}">
-					{missing ? 'MISSING' : offline ? 'OFFLINE' : 'ONLINE'}
+									{agentStatusLabel(agent.status)}
 								</span>
 							</span>
 						</TableCell>
@@ -580,7 +581,7 @@
 					{:else if filter === 'offline'}
 						Ningún contenedor está sin señal.
 					{:else if filter === 'missing'}
-						No containers are missing from inventory.
+						No containers are down.
 									{:else if filter === 'ignored'}
 										No hay contenedores ignorados.
 									{/if}
@@ -694,7 +695,7 @@
 						{:else if filter === 'offline'}
 							Ningún contenedor está sin señal.
 						{:else if filter === 'missing'}
-							No containers are missing from inventory.
+							No containers are down.
 						{:else if filter === 'ignored'}
 							No hay contenedores ignorados.
 						{/if}

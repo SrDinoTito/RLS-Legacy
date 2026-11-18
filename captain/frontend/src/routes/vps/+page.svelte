@@ -39,7 +39,7 @@
 		<Card class="vps-overview-stat"><span>Contenedores</span><strong>{agents.length.toString().padStart(2, '0')}</strong></Card>
 		<Card class="vps-overview-stat vps-overview-stat--online"><span>En línea</span><strong>{onlineCount.toString().padStart(2, '0')}</strong></Card>
 		<Card class="vps-overview-stat vps-overview-stat--offline"><span>Sin señal</span><strong>{offlineCount.toString().padStart(2, '0')}</strong></Card>
-		<Card class="vps-overview-stat vps-overview-stat--missing"><span>Missing</span><strong>{missingCount.toString().padStart(2, '0')}</strong></Card>
+		<Card class="vps-overview-stat vps-overview-stat--missing"><span>Down</span><strong>{missingCount.toString().padStart(2, '0')}</strong></Card>
 		<Card class="vps-overview-stat vps-overview-stat--alerts"><span>Alertas abiertas</span><strong>{alertCount.toString().padStart(2, '0')}</strong></Card>
 	</section>
 
@@ -62,7 +62,7 @@
 							<div class="vps-card-stats">
 								<span><i class="status-dot status-dot--online"></i>{group.onlineCount} en línea</span>
 								<span><i class="status-dot status-dot--offline"></i>{group.offlineCount} sin señal</span>
-								<span><i class="status-dot status-dot--missing"></i>{group.missingCount} missing</span>
+								<span><i class="status-dot status-dot--missing"></i>{group.missingCount} down</span>
 								<span class:has-alerts={group.alertCount > 0}>{group.alertCount} alertas</span>
 							</div>
 							<div class="vps-card-footer"><span>{isAdmin ? 'Ver y clasificar contenedores' : 'Ver contenedores'}</span><span class="vps-open-arrow">Explorar</span></div>

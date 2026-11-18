@@ -20,7 +20,7 @@
 	import { Tabs } from '#lib/components/ui/tabs/index.js';
 	import { Badge } from '#lib/components/ui/badge/index.js';
 	import PaginationControls from '#lib/components/PaginationControls.svelte';
-	import { fmtAgo, fmtTs, alertTypeLabel, fmtAlertMessage, fmtAlertReading } from '#lib/format.js';
+	import { agentStatusLabel, fmtAgo, fmtTs, alertTypeLabel, fmtAlertMessage, fmtAlertReading } from '#lib/format.js';
 	import { auth } from '#lib/stores/auth.svelte.js';
 	import NotificationPolicyControls from '#lib/components/NotificationPolicyControls.svelte';
 
@@ -212,7 +212,7 @@
 
 <Dialog
 	bind:open
-	title={missing ? `${agent.name} — MISSING IN DOCKER` : offline ? `${agent.name} — OFFLINE` : agent.name}
+	title={missing ? `${agent.name} — DOWN` : offline ? `${agent.name} — OFFLINE` : agent.name}
 	contentClass="w-[min(96vw,1120px)] h-[84vh] max-h-[900px]"
 >
 	{#if open}
@@ -222,7 +222,7 @@
 					<div class="min-w-0">
 						<p class="agent-detail-host">{agent.hostname}{#if agent.container_id} · <span title={agent.container_id}>{agent.container_id.slice(0, 12)}</span>{/if}</p>
 						<div class="mt-2 flex flex-wrap items-center gap-2">
-							{#if ignored}<Badge variant="outline">IGNORADO</Badge>{:else if missing}<Badge variant="outline">MISSING IN DOCKER</Badge>{:else if offline}<Badge variant="destructive">OFFLINE</Badge>{:else}<Badge variant="default">ONLINE</Badge>{/if}
+							{#if ignored}<Badge variant="outline">IGNORADO</Badge>{:else if unavailable}<Badge variant="destructive">{agentStatusLabel(agent.status)}</Badge>{:else}<Badge variant="default">{agentStatusLabel(agent.status)}</Badge>{/if}
 							<span class="text-xs text-muted-foreground">{ignored ? 'Monitoreo pausado' : missing ? 'Docker Engine no longer reports this container' : `Visto ${fmtAgo(agent.last_seen, nowSecs)} · intervalo ${agent.interval}s`}</span>
 						</div>
 					</div>
